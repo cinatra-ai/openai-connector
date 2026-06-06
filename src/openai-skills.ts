@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Agent, type JsonSchemaDefinition, OpenAIResponsesModel, run, shellTool, type Shell, type ShellOutputResult } from "@openai/agents";
 import type { HostRequiredPackageDefinition } from "@cinatra-ai/sdk-extensions";
 import OpenAI from "openai";
@@ -136,7 +137,15 @@ export const openAIAPISkillsPackage: HostRequiredPackageDefinition = {
 };
 
 const SETTINGS_KEY = "openai-api-skills";
-export const OPENAI_SHELL_RUNTIME_DIRECTORY = path.join(process.cwd(), "packages", "connector-openai", "runtime");
+// Module-anchored (via import.meta.url) so the path is correct in dev, under
+// pnpm-workspace symlinks, and in prod — unlike process.cwd(), which assumed a
+// fixed repo-root layout and a `packages/connector-openai/runtime` dir that no
+// longer exists after this connector was extracted to its own package.
+export const OPENAI_SHELL_RUNTIME_DIRECTORY = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "runtime",
+);
 export const OPENAI_SHELL_RUNTIME_DOCKERFILE = path.join(OPENAI_SHELL_RUNTIME_DIRECTORY, "Dockerfile");
 
 const OPENAI_SHELL_MODEL_PREFERENCES = [
