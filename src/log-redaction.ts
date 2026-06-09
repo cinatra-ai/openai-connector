@@ -5,10 +5,10 @@
 // writeOpenAILogFile (this package) to keep Bearer tokens out of the
 // .logs/ files on disk.
 //
-// DUPLICATED at `packages/llm-orchestration/src/log-redaction.ts` (with
+// DUPLICATED at `@cinatra-ai/llm src/log-redaction.ts` (with
 // the same content). Sharing it is blocked by the dep direction:
-// llm-orchestration depends on connector-openai (for writeOpenAILogFile),
-// so connector-openai cannot reverse-import without cycling. ~15 LoC is
+// @cinatra-ai/llm depends on @cinatra-ai/openai-connector (for writeOpenAILogFile),
+// so @cinatra-ai/openai-connector cannot reverse-import without cycling. ~15 LoC is
 // cheap enough to duplicate; both copies are exercised by their own
 // vitest canary test.
 

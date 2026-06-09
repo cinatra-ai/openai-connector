@@ -10,7 +10,7 @@ import { redactAuthorizationDeep } from "../log-redaction";
 
 const CANARY = `CANARY_TOKEN_${Math.random().toString(36).slice(2)}_DO_NOT_LEAK`;
 
-describe("redactAuthorizationDeep (connector-openai copy)", () => {
+describe("redactAuthorizationDeep (@cinatra-ai/openai-connector copy)", () => {
   it("replaces Authorization headers anywhere in the tree with [REDACTED] and leaves the canary nowhere", () => {
     const body = {
       model: "gpt-5.5",
@@ -52,5 +52,5 @@ describe("redactAuthorizationDeep (connector-openai copy)", () => {
   // (see src/index.ts writeOpenAILogFile), so the pure-redactor canary above IS
   // the binding regression gate for the OpenAI chokepoint. The Anthropic side
   // additionally exercises the writer end-to-end (telemetry.ts has a light import
-  // chain) — see packages/llm-orchestration/src/__tests__/log-redaction.test.ts.
+  // chain) — see @cinatra-ai/llm src/__tests__/log-redaction.test.ts.
 });
