@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Lockfile — extracted extension repos ship no committed lockfile (CI installs
+# with --no-frozen-lockfile; the cinatra monorepo owns dependency resolution).
+pnpm-lock.yaml
+
+# Build output (tsconfig outDir)
+dist/
+*.tsbuildinfo
+
+# Test artifacts
+coverage/
+
+# npm pack output
+*.tgz
+
+# Env files & secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
