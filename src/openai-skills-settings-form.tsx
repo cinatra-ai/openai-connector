@@ -2,6 +2,7 @@
 
 import { useNotify } from "@cinatra-ai/sdk-ui";
 import { saveOpenAISkillsSettingsAction } from "./actions";
+import { createSaveOpenAISkillsSubmitHandler } from "./openai-skills-settings-submit";
 import { OpenAIAPISkillsSettingsPanel } from "./openai-skills-settings-panel";
 import type { OpenAIShellSettings, OpenAIShellSkillCatalogEntry } from "./openai-skills";
 
@@ -28,22 +29,13 @@ export function OpenAISkillsSettingsForm({
 }: OpenAISkillsSettingsFormProps) {
   const { addNotification } = useNotify();
 
-  async function handleSubmit(formData: FormData) {
-    try {
-      await saveOpenAISkillsSettingsAction(formData);
-      addNotification({
-        title: "OpenAI skills saved",
-        body: "Skill configuration has been updated.",
-        kind: "success",
-      });
-    } catch (error) {
-      addNotification({
-        title: "Save failed",
-        body: error instanceof Error ? error.message : "Unable to save OpenAI skills.",
-        kind: "error",
-      });
-    }
-  }
+  // Toast copy plus the NEXT_REDIRECT re-throw guard live in
+  // ./openai-skills-settings-submit so the catch contract is unit-tested
+  // (see src/__tests__/openai-skills-settings-submit.test.ts).
+  const handleSubmit = createSaveOpenAISkillsSubmitHandler({
+    saveAction: saveOpenAISkillsSettingsAction,
+    addNotification,
+  });
 
   return (
     <OpenAIAPISkillsSettingsPanel
