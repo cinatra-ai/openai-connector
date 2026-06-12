@@ -31,6 +31,9 @@ import {
   OPENAI_SERVICE_TIER_OPTIONS,
   getOpenAILoggingSettings,
   saveOpenAILoggingSettings,
+  writeOpenAILogFile,
+  readOpenAIShellSettings,
+  runOpenAIShellCommandInDocker,
   type OpenAIConnectionConfig,
 } from "./index";
 import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
@@ -79,6 +82,34 @@ export function register(ctx: ExtensionHostContext): void {
       getLoggingSettings: () => getOpenAILoggingSettings(),
       saveLoggingSettings: (enabled: boolean) => saveOpenAILoggingSettings(enabled),
       logDirectory: OPENAI_API_LOG_DIRECTORY,
+      // LLM provider adapter cutover (cinatra#151 Stage 2): the host's
+      // packages/llm resolves these at call time instead of value-importing
+      // the package. `writeLogFile` keeps the connector's logging-enabled
+      // check + redaction; absence host-side degrades to a no-op.
+      writeLogFile: (input: { label: string; kind: "request" | "response"; body: unknown }) =>
+        writeOpenAILogFile({ label: input.label, kind: input.kind, body: input.body }),
+      // GATED shell-tool member (least privilege): a settings reader + the
+      // docker-confined executor — never a raw client/spawn handle. The
+      // STORED settings are the single policy authority: this ABI accepts NO
+      // administration/settings override (fields are picked explicitly, never
+      // spread), so the connector-side enabled/allowlist/limit gating in
+      // `runOpenAIShellCommandInDocker` cannot be bypassed through the
+      // capability surface.
+      shellTools: {
+        readSettings: () => readOpenAIShellSettings(),
+        runCommandInDocker: (input: {
+          shellCommand: string;
+          cwd?: string;
+          timeoutMs?: number;
+          maxOutputLength?: number;
+        }) =>
+          runOpenAIShellCommandInDocker({
+            shellCommand: input.shellCommand,
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs,
+            maxOutputLength: input.maxOutputLength,
+          }),
+      },
       actions: {
         saveConnection: (formData: FormData) => actions.saveConnection(formData),
         clearConnection: () => actions.clearConnection(),
