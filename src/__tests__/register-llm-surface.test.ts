@@ -124,12 +124,13 @@ describe("register(ctx) — Stage 2 llm-provider-surface members", () => {
 
 // ---------------------------------------------------------------------------
 // Transport-DI inversion (cinatra#151 Stage 3): register(ctx) binds the host
-// deps slot itself — bind-if-absent (a pre-cutover host's eager static bind
-// wins during skew), lazy per-call host-service resolution, nango members
-// over the connector-authored `nango-system` surface.
+// deps slot itself — always-bind (the skew guard was swept post-cutover; a
+// re-activation incl. a hot-update digest swap re-binds fresh resolvers),
+// lazy per-call host-service resolution, nango members over the
+// connector-authored `nango-system` surface.
 // ---------------------------------------------------------------------------
 
-import { getOpenAIDeps, hasOpenAIDeps, registerOpenAIConnector, _resetOpenAIDepsForTests } from "../deps";
+import { getOpenAIDeps, registerOpenAIConnector, _resetOpenAIDepsForTests } from "../deps";
 
 function activateWithServices(impls: Record<string, unknown>) {
   const resolveProviders = vi.fn((capability: string) =>
@@ -154,7 +155,6 @@ describe("register(ctx) — transport-DI deps binding (Stage 3)", () => {
     const { resolveProviders } = activateWithServices({
       "@cinatra-ai/host:runtime-mode": { isDevelopment },
     });
-    expect(hasOpenAIDeps()).toBe(true);
     // No host-service resolution happened at registration (probe-safe).
     expect(resolveProviders).not.toHaveBeenCalled();
     expect(getOpenAIDeps().isAppDevelopmentMode()).toBe(true);
@@ -162,12 +162,12 @@ describe("register(ctx) — transport-DI deps binding (Stage 3)", () => {
     expect(resolveProviders).toHaveBeenCalledWith("@cinatra-ai/host:runtime-mode");
   });
 
-  it("does NOT replace a pre-bound deps slot (bind-if-absent skew guard)", () => {
+  it("REPLACES a pre-bound deps slot (always-bind — a hot-update digest swap re-binds fresh resolvers)", () => {
     const sentinel = vi.fn(() => false);
     registerOpenAIConnector({ isAppDevelopmentMode: sentinel } as never);
     activateWithServices({ "@cinatra-ai/host:runtime-mode": { isDevelopment: () => true } });
-    expect(getOpenAIDeps().isAppDevelopmentMode()).toBe(false);
-    expect(sentinel).toHaveBeenCalledTimes(1);
+    expect(getOpenAIDeps().isAppDevelopmentMode()).toBe(true);
+    expect(sentinel).not.toHaveBeenCalled();
   });
 
   it("nango members delegate to the connector-authored nango-system surface", () => {
