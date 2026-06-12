@@ -121,3 +121,70 @@ describe("register(ctx) — Stage 2 llm-provider-surface members", () => {
     expect("administration" in forwarded).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Transport-DI inversion (cinatra#151 Stage 3): register(ctx) binds the host
+// deps slot itself — always-bind (the skew guard was swept post-cutover; a
+// re-activation incl. a hot-update digest swap re-binds fresh resolvers),
+// lazy per-call host-service resolution, nango members over the
+// connector-authored `nango-system` surface.
+// ---------------------------------------------------------------------------
+
+import { getOpenAIDeps, registerOpenAIConnector, _resetOpenAIDepsForTests } from "../deps";
+
+function activateWithServices(impls: Record<string, unknown>) {
+  const resolveProviders = vi.fn((capability: string) =>
+    impls[capability] !== undefined
+      ? [{ packageName: "@cinatra-ai/host", impl: impls[capability] }]
+      : [],
+  );
+  const ctx = {
+    capabilities: { registerProvider: () => {}, resolveProviders },
+  } as never;
+  register(ctx);
+  return { resolveProviders };
+}
+
+describe("register(ctx) — transport-DI deps binding (Stage 3)", () => {
+  beforeEach(() => {
+    _resetOpenAIDepsForTests();
+  });
+
+  it("binds the deps slot when absent, resolving host services LAZILY at call time", () => {
+    const isDevelopment = vi.fn(() => true);
+    const { resolveProviders } = activateWithServices({
+      "@cinatra-ai/host:runtime-mode": { isDevelopment },
+    });
+    // No host-service resolution happened at registration (probe-safe).
+    expect(resolveProviders).not.toHaveBeenCalled();
+    expect(getOpenAIDeps().isAppDevelopmentMode()).toBe(true);
+    expect(isDevelopment).toHaveBeenCalledTimes(1);
+    expect(resolveProviders).toHaveBeenCalledWith("@cinatra-ai/host:runtime-mode");
+  });
+
+  it("REPLACES a pre-bound deps slot (always-bind — a hot-update digest swap re-binds fresh resolvers)", () => {
+    const sentinel = vi.fn(() => false);
+    registerOpenAIConnector({ isAppDevelopmentMode: sentinel } as never);
+    activateWithServices({ "@cinatra-ai/host:runtime-mode": { isDevelopment: () => true } });
+    expect(getOpenAIDeps().isAppDevelopmentMode()).toBe(true);
+    expect(sentinel).not.toHaveBeenCalled();
+  });
+
+  it("nango members delegate to the connector-authored nango-system surface", () => {
+    const isNangoConfigured = vi.fn(() => true);
+    activateWithServices({
+      "nango-system": { isNangoConfigured, providerConfigKeys: { openai: "cinatra-openai" } },
+    });
+    expect(getOpenAIDeps().nango.isConfigured()).toBe(true);
+    expect(isNangoConfigured).toHaveBeenCalledTimes(1);
+    expect(getOpenAIDeps().nango.providerConfigKeys.openai).toBe("cinatra-openai");
+  });
+
+  it("fails LOUD (descriptive) on a missing host service at call time", () => {
+    activateWithServices({});
+    expect(() => getOpenAIDeps().isAppDevelopmentMode()).toThrow(
+      /host service "@cinatra-ai\/host:runtime-mode" is not registered/,
+    );
+    expect(() => getOpenAIDeps().nango.isConfigured()).toThrow(/nango-system/);
+  });
+});

@@ -7,12 +7,17 @@
 // through the `llm-provider-surface` capability instead of value-importing
 // the package. Provider absence degrades each host feature per call.
 //
-// SCOPE NOTE: the static host-DI deps wiring (`registerOpenAIConnector(deps)`
-// in the host's register-transport-connectors.ts) is explicitly out of this
-// cutover's scope and unchanged — this entry registers ONLY the host-facing
-// surface capability. Registration-only (no I/O) — safe under
-// required-extension-activation's prod-boot arming, and probe-safe (the
-// hot-update probe records registerProvider calls inertly).
+// Transport-DI inversion (cinatra#151 Stage 3): this entry ALSO binds the
+// connector's host deps slot (`registerOpenAIConnector(deps)`) by adapting
+// the per-concern host services published in the capability registry —
+// authorship of the transport registration moved connector-side; the host
+// names this package nowhere. Every deps member resolves its host service
+// LAZILY at call time, so
+// activation order against the host's boot imports never matters.
+// Registration-only (no I/O) — safe under required-extension-activation's
+// prod-boot arming, and probe-safe (the hot-update probe records
+// registerProvider calls inertly; its `resolveProviders` reads stay live, so
+// a probe-bound deps slot resolves identically to an activation-bound one).
 //
 // HOST-PEER HYGIENE (host-peer-value-import ban): SDK imports here are
 // TYPE-ONLY; the manage-permission guard for the action impls arrives as a
@@ -21,7 +26,7 @@
 // imported package modules (index / log-directory / actions-core) carry no
 // SDK value imports.
 
-import type { ExtensionHostContext } from "@cinatra-ai/sdk-extensions";
+import type { ExtensionHostContext, NangoSystemSurface } from "@cinatra-ai/sdk-extensions";
 import {
   isOpenAIConnectionReady,
   getConfiguredOpenAIConnection,
@@ -38,6 +43,7 @@ import {
 } from "./index";
 import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
 import { makeOpenAIConnectionActions } from "./actions-core";
+import { registerOpenAIConnector, type OpenAIConnectorDeps } from "./deps";
 
 const PACKAGE_NAME = "@cinatra-ai/openai-connector";
 
@@ -45,7 +51,116 @@ type HostActionGuard = {
   require(packageId: string, mode: "read" | "manage"): Promise<void>;
 };
 
+// Local STRUCTURAL shapes of the per-concern host services this connector
+// adapts into its deps slot (capability impls are data; the ids are inlined
+// string literals so the whole graph stays SDK-type-only). The host-side
+// contract types live in @cinatra-ai/sdk-extensions; these stay local so the
+// connector compiles against ANY host SDK it can meet during skew.
+type HostConnectorConfigShape = {
+  read<T>(connectorId: string, fallback: T): T;
+  write(connectorId: string, value: unknown): void;
+};
+type HostOpenAIConnectionShape = {
+  readRowFromDatabase: OpenAIConnectorDeps["readOpenAIConnectionFromDatabase"];
+  read: OpenAIConnectorDeps["readOpenAIConnection"];
+  update: OpenAIConnectorDeps["updateOpenAIConnection"];
+  clear: OpenAIConnectorDeps["clearOpenAIConnection"];
+  updateLoggingEnabled: OpenAIConnectorDeps["updateOpenAILoggingEnabled"];
+};
+type HostMcpSelfClientShape = { buildHeaders(): Record<string, string> };
+type HostRuntimeModeShape = { isDevelopment(): boolean };
+type HostNotificationsShape = { create: OpenAIConnectorDeps["createNotification"] };
+type HostSkillsCatalogShape = { read: OpenAIConnectorDeps["readSkillsCatalog"] };
+
+/** Lazy per-concern host-service resolution (fail-loud on a missing service —
+ * the host boot wiring publishes these before any connector call runs). */
+function hostService<T>(ctx: ExtensionHostContext, capability: string): T {
+  const provider = ctx.capabilities.resolveProviders(capability)[0];
+  if (!provider) {
+    throw new Error(
+      `${PACKAGE_NAME}: host service "${capability}" is not registered — ` +
+        `the host boot wiring (register-host-connector-services) must run before connector calls.`,
+    );
+  }
+  return provider.impl as T;
+}
+
+/** The connector-authored nango-system surface (registered by the nango
+ * gateway's own register(ctx) — a systemExtension, required at boot). */
+function nangoSystem(ctx: ExtensionHostContext): NangoSystemSurface {
+  const provider = ctx.capabilities.resolveProviders("nango-system")[0];
+  const surface = provider?.impl as NangoSystemSurface | undefined;
+  if (!surface || typeof surface.isNangoConfigured !== "function") {
+    throw new Error(
+      `${PACKAGE_NAME}: the "nango-system" capability surface is not registered — ` +
+        `resolve at call time (post-activation), never at module eval.`,
+    );
+  }
+  return surface;
+}
+
+/** Build the host-bound deps from the per-concern host services. Every member
+ * resolves LAZILY at call time — constructing this object does no I/O and no
+ * resolution (probe-safe). */
+function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
+  const config = () => hostService<HostConnectorConfigShape>(ctx, "@cinatra-ai/host:connector-config");
+  const connection = () => hostService<HostOpenAIConnectionShape>(ctx, "@cinatra-ai/host:openai-connection");
+  const selfClient = () => hostService<HostMcpSelfClientShape>(ctx, "@cinatra-ai/host:mcp-self-client");
+  const runtimeMode = () => hostService<HostRuntimeModeShape>(ctx, "@cinatra-ai/host:runtime-mode");
+  const notifications = () => hostService<HostNotificationsShape>(ctx, "@cinatra-ai/host:notifications");
+  const skillsCatalog = () => hostService<HostSkillsCatalogShape>(ctx, "@cinatra-ai/host:skills-catalog");
+  const nango = () => nangoSystem(ctx);
+  return {
+    readConnectorConfigFromDatabase: <T,>(connectorId: string, fallback: T): T =>
+      config().read(connectorId, fallback),
+    writeConnectorConfigToDatabase: (connectorId, value) => config().write(connectorId, value),
+    readOpenAIConnectionFromDatabase: () => connection().readRowFromDatabase(),
+    readOpenAIConnection: () => connection().read(),
+    updateOpenAIConnection: (input) => connection().update(input),
+    clearOpenAIConnection: () => connection().clear(),
+    updateOpenAILoggingEnabled: (loggingEnabled) => connection().updateLoggingEnabled(loggingEnabled),
+    buildAppMcpSelfClientHeaders: () => selfClient().buildHeaders(),
+    isAppDevelopmentMode: () => runtimeMode().isDevelopment(),
+    createNotification: (input) => notifications().create(input),
+    // Nango connection-storage members delegate to the connector-authored
+    // nango-system surface at CALL time (the key maps are getters for the
+    // same reason). `importConnection`/`ensureIntegration` inputs are cast at
+    // this boundary: the surface owns the real NangoConnectorKey union /
+    // required-displayName shape and this connector only ever passes valid
+    // values (same note as the host-era binding).
+    nango: {
+      isConfigured: () => nango().isNangoConfigured(),
+      getStatus: () => nango().getNangoStatus(),
+      getFrontendConfig: () => nango().getNangoFrontendConfig(),
+      getPrimarySavedConnection: (connectorKey) => nango().getPrimarySavedNangoConnection(connectorKey),
+      ensureIntegration: (input) =>
+        nango().ensureNangoIntegration(input as Parameters<NangoSystemSurface["ensureNangoIntegration"]>[0]),
+      importConnection: (input) =>
+        nango().importNangoConnection(input as Parameters<NangoSystemSurface["importNangoConnection"]>[0]),
+      getCredentials: (providerConfigKey, connectionId, opts) =>
+        nango().getNangoCredentials(providerConfigKey, connectionId, opts),
+      deleteConnection: (providerConfigKey, connectionId) =>
+        nango().deleteNangoConnection(providerConfigKey, connectionId),
+      clearConnectionRecords: (connectorKey) => nango().clearNangoConnectionRecords(connectorKey),
+      get providerConfigKeys() {
+        return nango().providerConfigKeys;
+      },
+      get connectionIds() {
+        return nango().connectionIds;
+      },
+    },
+    readSkillsCatalog: () => skillsCatalog().read(),
+  };
+}
+
 export function register(ctx: ExtensionHostContext): void {
+  // Transport-DI inversion: bind the host deps slot. Always-bind (the
+  // bind-if-absent skew guard was swept once every host this connector can
+  // meet is post-cutover): re-activation — incl. a hot-update digest swap —
+  // re-binds fresh lazy resolvers, so a stale deps object can never outlive
+  // its digest.
+  registerOpenAIConnector(buildHostBoundDeps(ctx));
+
   // Resolve the host's action-guard service LAZILY at action-call time, so
   // activation order against the host boot imports never matters and a
   // missing guard FAILS CLOSED (the action throws; nothing executes ungated).

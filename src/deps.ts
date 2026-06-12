@@ -121,12 +121,15 @@ type DepsHolder = { [k: symbol]: OpenAIConnectorDeps | null | undefined };
 const _holder = globalThis as unknown as DepsHolder;
 
 /**
- * Wire the host's runtime deps. Called once at boot
- * (src/lib/register-transport-connectors.ts). Re-calling replaces — tests swap stubs.
+ * Wire the runtime deps. Bound by the connector's own `register(ctx)` at
+ * activation (transport-DI inversion, cinatra#151 Stage 3) — and, on hosts
+ * that predate the cutover, statically at boot by the host's transport
+ * binder. Re-calling replaces — tests swap stubs.
  */
 export function registerOpenAIConnector(deps: OpenAIConnectorDeps): void {
   _holder[OPENAI_DEPS_KEY] = deps;
 }
+
 
 export function getOpenAIDeps(): OpenAIConnectorDeps {
   const deps = _holder[OPENAI_DEPS_KEY];

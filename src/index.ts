@@ -348,27 +348,6 @@ export async function listAvailableOpenAIModels(input: {
     .sort((left, right) => left.localeCompare(right));
 }
 
-export function parseStructuredJson<T>(rawText: string): T | null {
-  const candidates = [
-    rawText.trim(),
-    rawText.match(/```json\s*([\s\S]*?)```/i)?.[1]?.trim(),
-    rawText.match(/```([\s\S]*?)```/i)?.[1]?.trim(),
-    rawText.includes("{") && rawText.includes("}")
-      ? rawText.slice(rawText.indexOf("{"), rawText.lastIndexOf("}") + 1).trim()
-      : undefined,
-  ].filter(Boolean) as string[];
-
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate) as T;
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
 function parseJsonResponseBody<T>(rawBody: string): T | null {
   const candidates = [
     rawBody.trim(),
