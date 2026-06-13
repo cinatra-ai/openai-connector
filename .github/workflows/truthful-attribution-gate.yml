@@ -5,8 +5,9 @@ name: truthful-attribution-gate
 # it never fails a PR. No .github/gate-suite.json committed (WARN scope exercises
 # presence + the human arm; the gate-suite arm is not exercised without a suite).
 # Pinned to the immutable engine SHA proven green in cinatra ENFORCE today; this
-# is ci `main` HEAD (8eede102), one commit AHEAD of the current v0.1.0 tag — so
-# no `# v0.1.0` marker comment is used here (it would be false metadata).
+# is ci `main` HEAD (8eede102), one commit AHEAD of the current released tag — so
+# no tag-marker comment is used here: the pinned commit carries no matching
+# released tag, and adding one would be false metadata.
 
 on:
   pull_request:
