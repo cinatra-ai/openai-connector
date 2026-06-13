@@ -5,8 +5,7 @@
   "type": "module",
   "files": [
     "src",
-    "!src/__tests__",
-    "runtime"
+    "!src/__tests__"
   ],
   "main": "./src/index.ts",
   "types": "./src/index.ts",
