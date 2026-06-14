@@ -210,7 +210,7 @@ export async function getConfiguredOpenAIConnection(connection?: OpenAIConnectio
         ? storedConnection.apiKey.trim()
         : null;
   const resolvedConnection: OpenAIConnectionConfig = {
-    defaultModel: connection?.defaultModel ?? storedConnection?.defaultModel ?? "gpt-5",
+    defaultModel: connection?.defaultModel ?? storedConnection?.defaultModel ?? "gpt-5.5",
     apiKey: nangoApiKey ?? directApiKey ?? undefined,
     projectId: connection?.projectId ?? storedConnection?.projectId,
     organizationId: connection?.organizationId ?? storedConnection?.organizationId,
@@ -438,7 +438,7 @@ export async function callOpenAIResponsesDetailed(input: {
     return null;
   }
 
-  const model = resolvedConnection.defaultModel ?? "gpt-5";
+  const model = resolvedConnection.defaultModel ?? "gpt-5.5";
   const requestBody: OpenAIResponsesRequestBody = {
     model,
     service_tier: resolvedConnection?.serviceTier ?? getDefaultOpenAIServiceTier(),

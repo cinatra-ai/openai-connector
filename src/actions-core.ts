@@ -105,9 +105,9 @@ export function makeOpenAIConnectionActions(requireManage: OpenAIManageGuard) {
       defaultModel:
         parsed.defaultModel && availableModels.includes(parsed.defaultModel)
           ? parsed.defaultModel
-          : availableModels.includes("gpt-5")
-            ? "gpt-5"
-          : (availableModels[0] ?? "gpt-5"),
+          : availableModels.includes("gpt-5.5")
+            ? "gpt-5.5"
+          : (availableModels[0] ?? "gpt-5.5"),
       availableModels,
       promptCachingEnabled: parsed.promptCachingEnabled !== undefined
         ? parsed.promptCachingEnabled === "on" || parsed.promptCachingEnabled === "true"
