@@ -143,7 +143,7 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
                 <>
                   <Input
                     name="defaultModel"
-                    defaultValue={connection?.defaultModel ?? "gpt-5"}
+                    defaultValue={connection?.defaultModel ?? "gpt-5.5"}
                     className="bg-surface-muted text-muted-foreground"
                     readOnly
                   />
