@@ -142,11 +142,14 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
       deleteConnection: (providerConfigKey, connectionId) =>
         nango().deleteNangoConnection(providerConfigKey, connectionId),
       clearConnectionRecords: (connectorKey) => nango().clearNangoConnectionRecords(connectorKey),
+      // Vendor identity is OPEN at the SDK (#12): the surface's key maps are
+      // `Record<string, string>` (no SDK-frozen union), so this connector
+      // projects ITS OWN key out of the open map at the boundary.
       get providerConfigKeys() {
-        return nango().providerConfigKeys;
+        return { openai: nango().providerConfigKeys.openai };
       },
       get connectionIds() {
-        return nango().connectionIds;
+        return { openai: nango().connectionIds.openai };
       },
     },
     readSkillsCatalog: () => skillsCatalog().read(),
