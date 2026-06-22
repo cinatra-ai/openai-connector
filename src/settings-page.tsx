@@ -99,16 +99,21 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
           nangoFrontendConfig={nangoFrontendConfig}
           connectionServiceReady={connectionServiceReady}
         >
-          {maskedApiKey ? (
-            <p className="mt-4 text-sm text-muted-foreground">
-              Saved API key:{" "}
-              <code className="rounded bg-surface-strong px-1.5 py-0.5 text-xs text-foreground">
-                {maskedApiKey}
-              </code>{" "}
-              — compare with your OpenAI dashboard; reconnect to rotate.
-            </p>
-          ) : null}
           <form action={saveOpenAIConnectionAction} className="mt-5 grid items-start gap-4 border-t border-line pt-5 sm:grid-cols-2">
+            <Label className="grid gap-2 sm:col-span-2">
+              API key
+              <Input
+                name="apiKey"
+                type="password"
+                autoComplete="off"
+                defaultValue=""
+                placeholder={
+                  maskedApiKey
+                    ? `${maskedApiKey} · saved — leave blank to keep, paste a new key to rotate`
+                    : "Paste your OpenAI API key (sk-…)"
+                }
+              />
+            </Label>
             <Label className="grid gap-2">
               Project ID (optional)
               <Input
