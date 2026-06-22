@@ -94,26 +94,13 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
           description="Connect OpenAI through Nango for Cinatra's model-backed workflows."
           badge={isConnected ? "Connected" : "Setup required"}
           isConnected={isConnected}
+          detail={maskedApiKey ? `API key: ${maskedApiKey}` : undefined}
           usesConnectUI={true}
           reconnectConnectionId={getOpenAIDeps().nango.getPrimarySavedConnection("openai")?.connectionId}
           nangoFrontendConfig={nangoFrontendConfig}
           connectionServiceReady={connectionServiceReady}
         >
           <form action={saveOpenAIConnectionAction} className="mt-5 grid items-start gap-4 border-t border-line pt-5 sm:grid-cols-2">
-            <Label className="grid gap-2 sm:col-span-2">
-              API key
-              <Input
-                name="apiKey"
-                type="password"
-                autoComplete="off"
-                defaultValue=""
-                placeholder={
-                  maskedApiKey
-                    ? `${maskedApiKey} · saved — leave blank to keep, paste a new key to rotate`
-                    : "Paste your OpenAI API key (sk-…)"
-                }
-              />
-            </Label>
             <Label className="grid gap-2">
               Project ID (optional)
               <Input
