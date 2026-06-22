@@ -108,7 +108,7 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
               — compare with your OpenAI dashboard; reconnect to rotate.
             </p>
           ) : null}
-          <form action={saveOpenAIConnectionAction} className="mt-5 grid gap-4 border-t border-line pt-5 sm:grid-cols-2">
+          <form action={saveOpenAIConnectionAction} className="mt-5 grid items-start gap-4 border-t border-line pt-5 sm:grid-cols-2">
             <Label className="grid gap-2">
               Project ID (optional)
               <Input
