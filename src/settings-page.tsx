@@ -143,7 +143,7 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
                 ))}
               </select>
             </Label>
-            <Label className="grid gap-2 sm:col-span-2">
+            <Label className="grid gap-2">
               Default model
               {selectableModels.length > 0 ? (
                 <>
