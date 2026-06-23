@@ -57,9 +57,18 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
   // the OpenAI dashboard, decide whether to rotate). Only the known prefix +
   // last 4 chars are exposed; the full secret never reaches the client.
   const savedApiKey = configuredConnection?.apiKey;
-  const maskedApiKey = savedApiKey
-    ? `${savedApiKey.startsWith("sk-proj-") ? "sk-proj-" : savedApiKey.startsWith("sk-") ? "sk-" : ""}…${savedApiKey.slice(-4)}`
-    : null;
+  const keyPrefix = savedApiKey?.startsWith("sk-proj-")
+    ? "sk-proj-"
+    : savedApiKey?.startsWith("sk-")
+      ? "sk-"
+      : null;
+  // Only expose a masked preview for a recognized key format that is long
+  // enough that the last 4 chars can't reconstruct the whole secret; an
+  // unknown-format or short token is masked out entirely.
+  const maskedApiKey =
+    savedApiKey && keyPrefix && savedApiKey.length > keyPrefix.length + 4
+      ? `${keyPrefix}…${savedApiKey.slice(-4)}`
+      : null;
 
   return (
     <main className="min-h-screen px-5 py-8 sm:px-8 lg:px-6 lg:py-6">
