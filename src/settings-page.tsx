@@ -53,6 +53,23 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
 
   const selectableModels = filterSelectableOpenAIModels(availableModels);
 
+  // Masked preview of the saved key so the operator can identify it (compare to
+  // the OpenAI dashboard, decide whether to rotate). Only the known prefix +
+  // last 4 chars are exposed; the full secret never reaches the client.
+  const savedApiKey = configuredConnection?.apiKey;
+  const keyPrefix = savedApiKey?.startsWith("sk-proj-")
+    ? "sk-proj-"
+    : savedApiKey?.startsWith("sk-")
+      ? "sk-"
+      : null;
+  // Only expose a masked preview for a recognized key format that is long
+  // enough that the last 4 chars can't reconstruct the whole secret; an
+  // unknown-format or short token is masked out entirely.
+  const maskedApiKey =
+    savedApiKey && keyPrefix && savedApiKey.length > keyPrefix.length + 4
+      ? `${keyPrefix}…${savedApiKey.slice(-4)}`
+      : null;
+
   return (
     <main className="min-h-screen px-5 py-8 sm:px-8 lg:px-6 lg:py-6">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
@@ -86,25 +103,32 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
           description="Connect OpenAI through Nango for Cinatra's model-backed workflows."
           badge={isConnected ? "Connected" : "Setup required"}
           isConnected={isConnected}
+          detail={maskedApiKey ? `API key: ${maskedApiKey}` : undefined}
           usesConnectUI={true}
           reconnectConnectionId={getOpenAIDeps().nango.getPrimarySavedConnection("openai")?.connectionId}
           nangoFrontendConfig={nangoFrontendConfig}
           connectionServiceReady={connectionServiceReady}
         >
-          <form action={saveOpenAIConnectionAction} className="mt-5 grid gap-4 border-t border-line pt-5 sm:grid-cols-2">
+          <form action={saveOpenAIConnectionAction} className="mt-5 grid items-start gap-4 border-t border-line pt-5 sm:grid-cols-2">
             <Label className="grid gap-2">
-              Project ID
+              Project ID (optional)
               <Input
                 name="projectId"
                 defaultValue={connection?.projectId ?? ""}
               />
+              <span className="text-xs font-normal text-muted-foreground">
+                Scope API usage to a specific OpenAI project. Leave blank to use the key&apos;s default.
+              </span>
             </Label>
             <Label className="grid gap-2">
-              Organization ID
+              Organization ID (optional)
               <Input
                 name="organizationId"
                 defaultValue={connection?.organizationId ?? ""}
               />
+              <span className="text-xs font-normal text-muted-foreground">
+                Scope to a specific OpenAI organization. Leave blank to use the key&apos;s default.
+              </span>
             </Label>
             <Label className="grid gap-2">
               Service tier
@@ -120,7 +144,7 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
                 ))}
               </select>
             </Label>
-            <Label className="grid gap-2 sm:col-span-2">
+            <Label className="grid gap-2">
               Default model
               {selectableModels.length > 0 ? (
                 <>
