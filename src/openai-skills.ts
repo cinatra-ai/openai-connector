@@ -107,8 +107,16 @@ export type OpenAIShellSandboxPolicy = {
     maxFileWriteKilobytes: number;
   };
   network: {
+    // What the connector's OWN docker runner grants. Always false today: the
+    // runner cannot enforce a per-host allowlist, so it never opens the bridge.
     enabled: boolean;
     allowedHosts: string[];
+    // The admin's DECLARED egress intent (allowNetwork + non-empty allowlist),
+    // for an external egress-enforcing executor — NOT a runner-enforced grant.
+    declaredEnabled: boolean;
+    declaredHosts: string[];
+    // Whether the connector runner can enforce per-host egress (currently no).
+    runnerEnforceable: boolean;
   };
   audit: {
     enabled: boolean;
@@ -168,25 +176,15 @@ function defaultSettings(): OpenAIShellSettings {
     containerPidsLimit: 128,
     readRoots: [process.cwd()],
     writeRoots: [path.join(process.cwd(), "tmp"), "/tmp"],
-    allowedCommandPrefixes: [
-      "ls",
-      "pwd",
-      "cat",
-      "rg",
-      "find",
-      "sed",
-      "head",
-      "tail",
-      "wc",
-      "sort",
-      "uniq",
-      "cut",
-      "awk",
-      "node",
-      "python3",
-      "sh",
-      "bash",
-    ],
+    // Default allowlist intentionally EXCLUDES arbitrary-code execution vectors
+    // (sh/bash/node/python3/awk/find/sed): prefix-allowlisting a program that
+    // executes any code/command handed to it is a false boundary — `node -e/-p`,
+    // `python3 -c`, `sh -c`, `awk 'BEGIN{system(...)}'`, `find -exec`, and GNU
+    // `sed` `e` all launder blocked work past a name check. The Docker isolation
+    // (read-only root, cap-drop, no-new-privileges, network-off) remains the
+    // real boundary; an admin who explicitly re-adds an interpreter/`awk`/`find`
+    // still gets the inline-code / dangerous-action guard below.
+    allowedCommandPrefixes: ["ls", "pwd", "cat", "rg", "head", "tail", "wc", "sort", "uniq", "cut"],
     blockedCommandPrefixes: ["rm", "sudo", "chmod", "chown", "curl", "wget", "ssh", "scp", "git push", "git reset"],
     allowNetwork: false,
     allowedHosts: [],
@@ -221,24 +219,452 @@ function normalizeCommandPrefix(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-function assertAllowedCommand(command: string, settings: OpenAIShellSettings) {
-  const normalizedCommand = normalizeCommandPrefix(command);
-  const isBlocked = settings.blockedCommandPrefixes.some((entry) => {
-    const normalizedEntry = normalizeCommandPrefix(entry);
-    return normalizedCommand === normalizedEntry || normalizedCommand.startsWith(`${normalizedEntry} `);
-  });
+// Shell metacharacters whose semantics a per-segment allow/block check cannot
+// safely reason about. Their presence means the executed program set is no
+// longer the visible token list, so the policy can be silently bypassed
+// (e.g. `cat $(printf curl)`). Because the inner command runs through
+// `sh -lc`, we MUST reject these constructs outright (fail-closed) rather than
+// attempt to interpret them: command substitution, backticks, process
+// substitution, and here-strings/here-docs.
+const SHELL_SUBSTITUTION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /`/, label: "backtick command substitution" },
+  { pattern: /<\(/, label: "process substitution <(...)" },
+  { pattern: />\(/, label: "process substitution >(...)" },
+  // Reject ALL `$` expansion (command substitution `$(...)`, parameter/variable
+  // expansion `$VAR`/`${...}`, arithmetic `$((...))`). Variable expansion can
+  // launder a blocked flag past argv tokenization — `rg $IFS-c ...` becomes
+  // `rg -c ...` only inside `sh -lc`, after our check. Since the validator
+  // tokenizes the PRE-expansion string, anything `$`-driven is unmodellable and
+  // is refused outright (fail-closed).
+  { pattern: /\$/, label: "shell variable/command expansion ($...)" },
+];
 
-  if (isBlocked) {
-    throw new Error(`Command "${command}" is blocked by the shell sandbox policy.`);
+// Operators that separate one command invocation from the next. Splitting the
+// command on these (outside quotes) yields the set of programs the shell will
+// actually run, so each one can be policy-checked. Order matters: longer
+// operators first so `&&`/`||` are not mis-split as single `&`/`|`.
+const SHELL_SEGMENT_OPERATORS = ["&&", "||", ";;", ";", "|&", "|", "&", "\n"];
+
+// Tokenize a command into top-level segments, honoring single/double quotes and
+// backslash escaping so that an operator INSIDE a quoted argument (e.g.
+// `grep 'a && b'`) is NOT treated as a command separator. We deliberately do
+// NOT implement full shell semantics — anything we cannot model (substitutions)
+// is rejected up front, so this splitter only ever sees plain operator-joined
+// command lists.
+function splitShellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+
+  for (let i = 0; i < command.length; i += 1) {
+    const char = command[i];
+
+    if (quote) {
+      current += char;
+      if (char === "\\" && quote === '"' && i + 1 < command.length) {
+        current += command[i + 1];
+        i += 1;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+
+    if (char === "\\" && i + 1 < command.length) {
+      current += char + command[i + 1];
+      i += 1;
+      continue;
+    }
+
+    const operator = SHELL_SEGMENT_OPERATORS.find((op) => command.startsWith(op, i));
+    if (operator) {
+      segments.push(current);
+      current = "";
+      i += operator.length - 1;
+      continue;
+    }
+
+    current += char;
   }
 
-  const isAllowed = settings.allowedCommandPrefixes.some((entry) => {
-    const normalizedEntry = normalizeCommandPrefix(entry);
-    return normalizedCommand === normalizedEntry || normalizedCommand.startsWith(`${normalizedEntry} `);
-  });
+  // An unterminated quote means the input is not a well-formed command list we
+  // can reason about — fail closed.
+  if (quote) {
+    throw new Error("Command has an unterminated quote and cannot be validated by the shell sandbox policy.");
+  }
 
-  if (!isAllowed) {
+  segments.push(current);
+  return segments.map((segment) => segment.trim()).filter((segment) => segment.length > 0);
+}
+
+// Programs that execute arbitrary code supplied as an inline argument or via
+// stdin. Allowlisting their NAME is meaningless for the command policy — the
+// blocked work hides inside the inline program (`bash -lc 'curl ...'`,
+// `node -e '...child_process...'`, `python3 -c 'os.system(...)'`,
+// `sh -c '...'`, `perl -e`, `env BASH ...`). The policy therefore inspects the
+// argv of any allowlisted interpreter and refuses inline-code / read-from-stdin
+// invocations (fail-closed). Script-FILE execution (e.g. `python3 build.py`)
+// stays permitted: the script lives under a mounted, policy-scoped root.
+const INLINE_CODE_INTERPRETERS = new Set([
+  "sh",
+  "bash",
+  "dash",
+  "zsh",
+  "ksh",
+  "ash",
+  "node",
+  "nodejs",
+  "deno",
+  "bun",
+  "python",
+  "python3",
+  "python2",
+  "perl",
+  "ruby",
+  "php",
+  "lua",
+  "tclsh",
+  "Rscript",
+  "osascript",
+  "env", // `env <interpreter> -c ...` would otherwise launder the interpreter
+  "xargs", // `xargs sh -c ...` likewise
+  "nohup",
+  "timeout",
+  "stdbuf",
+  "setsid",
+  "nice",
+]);
+
+// Flags that hand an interpreter inline code, print-eval it, or tell it to read
+// the program from stdin. Matched against a SHORT-flag bundle's letters and the
+// known long forms. Short bundles are exploded so `-lc`/`-ec`/`-pe` are caught
+// regardless of order; any bundle containing an exec-capable letter
+// (c=command, e=eval, p=print-eval, E=perl loop-eval, x/X obscure) is refused.
+const INLINE_CODE_LONG_FLAGS = new Set([
+  "--eval",
+  "--exec",
+  "--command",
+  "--expression",
+  "--run",
+  "--print",
+]);
+const INLINE_CODE_SHORT_LETTERS = new Set(["c", "e", "p", "x"]);
+
+function baseName(token: string) {
+  const cleaned = token.replace(/['"]/g, "");
+  const slash = cleaned.lastIndexOf("/");
+  return slash >= 0 ? cleaned.slice(slash + 1) : cleaned;
+}
+
+function isInlineCodeFlag(token: string) {
+  // Normalize a `--flag=value` long form to `--flag` so `node --eval=...` is
+  // caught the same as `node --eval ...`.
+  const longHead = token.includes("=") ? token.slice(0, token.indexOf("=")) : token;
+  if (token.startsWith("--")) {
+    return INLINE_CODE_LONG_FLAGS.has(longHead.toLowerCase());
+  }
+  if (token.startsWith("-") && token.length > 1) {
+    // Explode a short-flag bundle (`-lc`, `-pe`) into letters; any
+    // exec-capable letter trips the guard. Stop at `=` so `-e=...` is handled.
+    const letters = (token.includes("=") ? token.slice(1, token.indexOf("=")) : token.slice(1)).split("");
+    return letters.some((letter) => INLINE_CODE_SHORT_LETTERS.has(letter.toLowerCase()));
+  }
+  return false;
+}
+
+// Flags that make an OTHERWISE-safe utility execute an external program. These
+// are checked on EVERY segment regardless of allowlist, because the program
+// (e.g. the default-allowlisted `rg`) is benign by name but spawns a child via
+// these options: ripgrep `--pre`/`--preprocessor`/`--hostname-bin`, GNU sort
+// `--compress-program`/`--use-compress-program`/`--files0-from`, etc.
+const EXTERNAL_PROGRAM_FLAGS = new Set([
+  "--pre",
+  "--preprocessor",
+  "--hostname-bin",
+  "--compress-program",
+  "--use-compress-program",
+  "--files0-from",
+  "--rcfile",
+  "--init-file",
+]);
+
+function assertNoExternalProgramFlag(tokens: string[], segment: string) {
+  for (const token of tokens.slice(1)) {
+    if (!token.startsWith("--")) {
+      continue;
+    }
+    const head = token.includes("=") ? token.slice(0, token.indexOf("=")) : token;
+    if (EXTERNAL_PROGRAM_FLAGS.has(head.toLowerCase())) {
+      throw new Error(
+        `Command "${segment}" uses an option that executes an external program (${head}), which is not permitted by the shell sandbox policy.`,
+      );
+    }
+  }
+}
+
+// `awk`/`find` are not interpreters by name but execute arbitrary commands by
+// design — `awk` via its inline program (`system(...)`, `print | "cmd"`) and
+// `find` via `-exec`/`-execdir`/`-ok`/`-okdir`/`-delete`/`-fprintf`. They are
+// guarded structurally rather than by the interpreter-flag pattern.
+const FIND_DANGEROUS_ACTIONS = new Set([
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+  "-delete",
+  "-fprintf",
+  "-fprint",
+  "-fprint0",
+]);
+
+function assertNoInlineInterpreterCode(tokens: string[], segment: string) {
+  if (tokens.length === 0) {
+    return;
+  }
+
+  const program = baseName(tokens[0]);
+  const args = tokens.slice(1);
+
+  const fail = (why: string) => {
+    throw new Error(`Command "${segment}" ${why}, which is not permitted by the shell sandbox policy.`);
+  };
+
+  if (program === "find") {
+    if (args.some((token) => FIND_DANGEROUS_ACTIONS.has(token.toLowerCase()))) {
+      fail("uses a find action that executes or deletes (e.g. -exec/-delete)");
+    }
+    return;
+  }
+
+  if (program === "awk" || program === "gawk" || program === "mawk" || program === "nawk") {
+    // An inline awk program (anything that is not a `-f scriptfile`) can call
+    // `system(...)` or pipe to a shell. Only `-f <file>` script execution under
+    // a mounted root is permitted.
+    const usesScriptFile = args.some((token) => token === "-f" || token.startsWith("-f") || token === "--file");
+    if (!usesScriptFile) {
+      fail("runs an inline awk program, which can execute shell commands");
+    }
+    return;
+  }
+
+  if (!INLINE_CODE_INTERPRETERS.has(program)) {
+    return;
+  }
+
+  for (const token of args) {
+    // Read-from-stdin sentinel (`python3 -`, `bash -`) — arbitrary program.
+    if (token === "-") {
+      fail("runs an interpreter reading its program from stdin");
+    }
+    if (token.startsWith("-") && isInlineCodeFlag(token)) {
+      fail("passes inline code to an interpreter");
+    }
+  }
+}
+
+// Split a single segment into argv tokens, honoring quotes/escapes, so we can
+// inspect an interpreter's flags. Substitutions were already rejected upstream.
+function tokenizeSegment(segment: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let started = false;
+
+  const push = () => {
+    if (started) {
+      tokens.push(current);
+    }
+    current = "";
+    started = false;
+  };
+
+  for (let i = 0; i < segment.length; i += 1) {
+    const char = segment[i];
+    if (quote) {
+      if (char === "\\" && quote === '"' && i + 1 < segment.length) {
+        current += segment[i + 1];
+        i += 1;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+        continue;
+      }
+      current += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      started = true;
+      continue;
+    }
+    if (char === "\\" && i + 1 < segment.length) {
+      current += segment[i + 1];
+      started = true;
+      i += 1;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      push();
+      continue;
+    }
+    current += char;
+    started = true;
+  }
+  push();
+  return tokens;
+}
+
+function assertSegmentAllowed(segment: string, settings: OpenAIShellSettings) {
+  const normalizedCommand = normalizeCommandPrefix(segment);
+  if (!normalizedCommand) {
+    return;
+  }
+
+  const matchesPrefix = (entry: string) => {
+    const normalizedEntry = normalizeCommandPrefix(entry);
+    return (
+      normalizedEntry.length > 0 &&
+      (normalizedCommand === normalizedEntry || normalizedCommand.startsWith(`${normalizedEntry} `))
+    );
+  };
+
+  if (settings.blockedCommandPrefixes.some(matchesPrefix)) {
+    throw new Error(`Command "${segment}" is blocked by the shell sandbox policy.`);
+  }
+
+  if (!settings.allowedCommandPrefixes.some(matchesPrefix)) {
+    throw new Error(`Command "${segment}" is not allowlisted for the shell sandbox policy.`);
+  }
+
+  // Even an allowlisted leading token must not be an interpreter laundering
+  // arbitrary inline code, nor a benign utility spawning an external program
+  // via an exec-capable option, past the prefix check.
+  const tokens = tokenizeSegment(segment);
+  assertNoInlineInterpreterCode(tokens, segment);
+  assertNoExternalProgramFlag(tokens, segment);
+}
+
+// Validates the FULL command string that will be handed to `sh -lc`, not just
+// its leading token. Previously only the first program was prefix-matched, so a
+// chained command (`ls && curl http://evil`), a piped command, or an
+// allowlisted interpreter wrapping arbitrary work (`bash`, `node`, `python3`)
+// passed the gate while the inner programs ran unchecked. We now (1) reject any
+// shell substitution we cannot model and (2) policy-check EVERY operator-joined
+// segment.
+export // Unquoted pathname/brace metacharacters trigger shell expansion AFTER our
+// argv validation — a workspace file named `--pre=sh` would be globbed into an
+// allowlisted tool's argv (e.g. `rg needle *` -> `rg needle --pre=sh payload`),
+// re-introducing the external-program-flag bypass without any `$`/backtick. We
+// reject unquoted `*`, `?`, `[`, `{` so the validated argv is the executed argv.
+// Quoted/escaped metacharacters (a quoted regex like `'a.*b'`) are fine.
+const GLOB_METACHARACTERS = new Set(["*", "?", "[", "{"]);
+
+function assertNoUnquotedGlob(command: string) {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < command.length; i += 1) {
+    const char = command[i];
+    if (quote) {
+      if (char === "\\" && quote === '"' && i + 1 < command.length) {
+        i += 1;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "\\" && i + 1 < command.length) {
+      i += 1; // escaped next char is literal
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (GLOB_METACHARACTERS.has(char)) {
+      throw new Error(
+        `Command "${command}" uses an unquoted shell expansion character ("${char}"), which is not permitted by the shell sandbox policy.`,
+      );
+    }
+  }
+}
+
+// Redirection and here-doc/comment grammar (`>`, `>>`, `<`, `<<`, `<<<`, `<>`,
+// `2>`, `&>`, `>|`, and a word-start `#` comment) is interpreted by `sh -lc`
+// AFTER our argv validation. The validator models the executed program set as
+// the operator-joined segment list and its tokens; redirection silently changes
+// a segment's I/O targets (e.g. `cat secret > file`, `cmd < /path`) and a
+// comment truncates the validated string, so neither is part of the argv we
+// checked. The substitution guard already rejects `$`/backtick/`<(`/`>(`, but
+// NOT plain redirection or comments — the prior comment overstated coverage.
+// We reject them here (quote-aware) so the validated argv is the executed argv;
+// a quoted/escaped `<`/`>`/`#` (e.g. a regex `rg '>'`) stays legal.
+function assertNoRedirectionOrComment(command: string) {
+  let quote: '"' | "'" | null = null;
+  let atWordStart = true; // start-of-string and any unquoted whitespace begins a word
+  for (let i = 0; i < command.length; i += 1) {
+    const char = command[i];
+    if (quote) {
+      if (char === "\\" && quote === '"' && i + 1 < command.length) {
+        i += 1;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+      }
+      atWordStart = false;
+      continue;
+    }
+    if (char === "\\" && i + 1 < command.length) {
+      i += 1; // escaped next char is a literal token char
+      atWordStart = false;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      atWordStart = false;
+      continue;
+    }
+    if (char === "<" || char === ">") {
+      throw new Error(
+        `Command "${command}" uses an unquoted redirection operator ("${char}"), which is not permitted by the shell sandbox policy.`,
+      );
+    }
+    if (char === "#" && atWordStart) {
+      throw new Error(
+        `Command "${command}" uses a shell comment ("#"), which is not permitted by the shell sandbox policy.`,
+      );
+    }
+    atWordStart = /\s/.test(char);
+  }
+}
+
+export function assertAllowedCommand(command: string, settings: OpenAIShellSettings) {
+  for (const { pattern, label } of SHELL_SUBSTITUTION_PATTERNS) {
+    if (pattern.test(command)) {
+      throw new Error(`Command "${command}" uses ${label}, which is not permitted by the shell sandbox policy.`);
+    }
+  }
+
+  assertNoUnquotedGlob(command);
+  assertNoRedirectionOrComment(command);
+
+  const segments = splitShellSegments(command);
+  if (segments.length === 0) {
     throw new Error(`Command "${command}" is not allowlisted for the shell sandbox policy.`);
+  }
+
+  for (const segment of segments) {
+    assertSegmentAllowed(segment, settings);
   }
 }
 
@@ -606,18 +1032,24 @@ export function readOpenAIShellSettings(): OpenAIShellSettings {
 
 export async function saveOpenAIShellSettings(input: OpenAIShellSettingsInput) {
   const current = readOpenAIShellSettings();
+  // A PRESENT field (even an empty string/array) is an explicit set — an admin
+  // clearing the allowed-hosts textarea must actually clear the allowlist (and
+  // thereby fail-close egress), not silently retain the prior hosts. Only an
+  // ABSENT (`undefined`) field falls back to the current value.
   const nextSettings: OpenAIShellSettings = {
     ...current,
     ...input,
-    readRoots: input.readRoots ? normalizeStringList(input.readRoots) : current.readRoots,
-    writeRoots: input.writeRoots ? normalizeStringList(input.writeRoots) : current.writeRoots,
-    allowedCommandPrefixes: input.allowedCommandPrefixes
-      ? normalizeStringList(input.allowedCommandPrefixes)
-      : current.allowedCommandPrefixes,
-    blockedCommandPrefixes: input.blockedCommandPrefixes
-      ? normalizeStringList(input.blockedCommandPrefixes)
-      : current.blockedCommandPrefixes,
-    allowedHosts: input.allowedHosts ? normalizeStringList(input.allowedHosts) : current.allowedHosts,
+    readRoots: input.readRoots !== undefined ? normalizeStringList(input.readRoots) : current.readRoots,
+    writeRoots: input.writeRoots !== undefined ? normalizeStringList(input.writeRoots) : current.writeRoots,
+    allowedCommandPrefixes:
+      input.allowedCommandPrefixes !== undefined
+        ? normalizeStringList(input.allowedCommandPrefixes)
+        : current.allowedCommandPrefixes,
+    blockedCommandPrefixes:
+      input.blockedCommandPrefixes !== undefined
+        ? normalizeStringList(input.blockedCommandPrefixes)
+        : current.blockedCommandPrefixes,
+    allowedHosts: input.allowedHosts !== undefined ? normalizeStringList(input.allowedHosts) : current.allowedHosts,
     maxExecutionSeconds: clampInteger(input.maxExecutionSeconds, current.maxExecutionSeconds, 5, 600),
     maxOutputKilobytes: clampInteger(input.maxOutputKilobytes, current.maxOutputKilobytes, 16, 4096),
     maxFileWriteKilobytes: clampInteger(input.maxFileWriteKilobytes, current.maxFileWriteKilobytes, 16, 4096),
@@ -724,10 +1156,20 @@ export function buildOpenAIShellSandboxPolicy(settings = readOpenAIShellSettings
       maxOutputKilobytes: settings.maxOutputKilobytes,
       maxFileWriteKilobytes: settings.maxFileWriteKilobytes,
     },
-    network: {
-      enabled: settings.allowNetwork,
-      allowedHosts: settings.allowedHosts,
-    },
+    network: (() => {
+      // The connector's own runner always denies network (it cannot enforce a
+      // per-host allowlist), so `enabled` reflects what the runner ACTUALLY
+      // grants — always false. The admin's declared intent is surfaced
+      // separately so it is never mistaken for an enforced boundary.
+      const egress = resolveEgressPolicy(settings);
+      return {
+        enabled: false,
+        allowedHosts: [],
+        declaredEnabled: egress.declaredEnabled,
+        declaredHosts: egress.declaredHosts,
+        runnerEnforceable: egress.runnerEgressEnforceable,
+      };
+    })(),
     audit: {
       enabled: settings.auditLogsEnabled,
     },
@@ -744,7 +1186,37 @@ export function getOpenAIShellRuntimeInfo(settings = readOpenAIShellSettings()) 
   };
 }
 
+// Egress is fail-closed AND honest about WHO can enforce it.
+//
+// The previous code mapped `allowNetwork=true` to docker `--network=bridge`,
+// which reaches EVERY host — `allowedHosts` was never enforced, a false
+// boundary. This connector's own runner (`runOpenAIShellCommandInDocker` ->
+// `docker run`) can only toggle the network namespace on/off; it CANNOT do
+// per-host L3/L7 egress filtering (that needs an egress proxy/firewall sidecar
+// that does not exist in this repo). So the connector-run container must NOT be
+// granted unrestricted bridge access while pretending the allowlist applies.
+//
+// Resolution:
+//   - `declaredEnabled`/`declaredHosts`: the admin's intent, persisted policy
+//     an EXTERNAL egress-enforcing executor can consume.
+//   - `runnerNetworkMode`: what THIS connector hands to `docker run`. Because
+//     the runner cannot enforce a per-host allowlist, it is ALWAYS `none`
+//     (default-deny) — no false "open the bridge" boundary.
+//   - `runnerEgressEnforceable`: false — surfaced so callers/policy never claim
+//     the connector enforces `allowedHosts`.
+export function resolveEgressPolicy(settings: OpenAIShellSettings) {
+  const allowedHosts = normalizeStringList(settings.allowedHosts);
+  const declaredEnabled = settings.allowNetwork && allowedHosts.length > 0;
+  return {
+    declaredEnabled,
+    declaredHosts: declaredEnabled ? allowedHosts : [],
+    runnerEgressEnforceable: false,
+    runnerNetworkMode: "none" as const,
+  };
+}
+
 export function buildOpenAIShellContainerSpec(settings = readOpenAIShellSettings()) {
+  const egress = resolveEgressPolicy(settings);
   return {
     image: settings.containerImage,
     workspacePath: settings.containerWorkspacePath,
@@ -753,7 +1225,12 @@ export function buildOpenAIShellContainerSpec(settings = readOpenAIShellSettings
     cpuLimit: settings.containerCpuLimit,
     memoryLimit: settings.containerMemoryLimit,
     pidsLimit: settings.containerPidsLimit,
-    networkMode: settings.allowNetwork ? "bridge" : "none",
+    // The runner cannot enforce per-host egress, so it always denies network.
+    networkMode: egress.runnerNetworkMode,
+    // Declared policy surfaced for an external egress-enforcing executor; this
+    // is NOT enforced by the connector's own `docker run`.
+    declaredEgressAllowlist: egress.declaredHosts,
+    runnerEgressEnforceable: egress.runnerEgressEnforceable,
     securityOptions: ["no-new-privileges:true"],
     capDrop: ["ALL"],
     tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"],
@@ -883,9 +1360,22 @@ export async function runOpenAIShellCommandInDocker(input: {
   maxOutputLength?: number;
 }) {
   const settings = input.administration ?? readOpenAIShellSettings();
+  // Single policy choke point: validate the ACTUAL command before it reaches
+  // `sh -lc`. Both callers route through here — the agent-driven
+  // `DockerSandboxShell.run` and the host capability surface
+  // (`register.ts` -> `runCommandInDocker`, used by cinatra's shell tool) — so
+  // enforcing the inner-command policy here closes the wrapper-`sh` bypass for
+  // every entry point. The `buildOpenAIShellDockerInvocation` call below only
+  // re-validates the literal `sh` wrapper, which is intentionally allowlisted.
+  assertAllowedCommand(input.shellCommand, settings);
+  // Defense-in-depth at the runner: `set -f` disables pathname (glob) expansion
+  // so even a metacharacter the validator did not anticipate cannot expand a
+  // workspace filename into an allowlisted tool's argv after validation. The
+  // validator already rejects unquoted globs and all `$`/backtick/`<()` forms;
+  // this neutralizes the same class at execution time too.
   const dockerInvocation = await buildOpenAIShellDockerInvocation({
     command: "sh",
-    args: ["-lc", input.shellCommand],
+    args: ["-lc", `set -f; ${input.shellCommand}`],
     cwd: input.cwd,
     administration: settings,
   });
