@@ -1,5 +1,6 @@
 import type { OpenAIShellSettings, OpenAIShellSkillCatalogEntry } from "./openai-skills";
 import { Button } from "./components/ui/button";
+import { Checkbox } from "./components/ui/checkbox";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Textarea } from "./components/ui/textarea";
@@ -30,8 +31,7 @@ export function OpenAIAPISkillsSettingsPanel({
   return (
     <form action={action} className="flex flex-col gap-5">
         <Label className="flex items-start gap-3 rounded-control border border-line bg-surface-strong px-4 py-4">
-          <input
-            type="checkbox"
+          <Checkbox
             name="enabled"
             defaultChecked={settings.enabled}
             className="mt-1 h-4 w-4 rounded border-line text-foreground"
@@ -148,8 +148,7 @@ export function OpenAIAPISkillsSettingsPanel({
         </section>
 
         <Label className="flex items-start gap-3 rounded-control border border-line bg-surface-strong px-4 py-4">
-          <input
-            type="checkbox"
+          <Checkbox
             name="allowNetwork"
             defaultChecked={settings.allowNetwork}
             className="mt-1 h-4 w-4 rounded border-line text-foreground"
@@ -163,8 +162,7 @@ export function OpenAIAPISkillsSettingsPanel({
         </Label>
 
         <Label className="flex items-start gap-3 rounded-control border border-line bg-surface-strong px-4 py-4">
-          <input
-            type="checkbox"
+          <Checkbox
             name="auditLogsEnabled"
             defaultChecked={settings.auditLogsEnabled}
             className="mt-1 h-4 w-4 rounded border-line text-foreground"

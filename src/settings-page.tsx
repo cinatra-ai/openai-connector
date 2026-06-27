@@ -4,6 +4,8 @@ import { getOpenAIDeps } from "./deps";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
+import { Link } from "./components/ui/link";
+import { Select } from "./components/ui/select";
 import {
   getDefaultOpenAIServiceTier,
   getConfiguredOpenAIConnection,
@@ -80,7 +82,7 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
               Connect Nango to manage the OpenAI API credential. Configure it on the connections settings page.
             </p>
             <Button asChild variant="outline" className="mt-3">
-              <a href="/configuration/environment?tab=connections">Open connection settings</a>
+              <Link href="/configuration/environment?tab=connections">Open connection settings</Link>
             </Button>
           </div>
         ) : null}
@@ -132,7 +134,7 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
             </Label>
             <Label className="grid gap-2">
               Service tier
-              <select
+              <Select
                 name="serviceTier"
                 defaultValue={connection?.serviceTier ?? defaultServiceTier}
                 className="rounded-control border border-line bg-surface-strong px-4 py-3"
@@ -142,13 +144,13 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
                     {option.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Label>
             <Label className="grid gap-2">
               Default model
               {selectableModels.length > 0 ? (
                 <>
-                  <select
+                  <Select
                     name="defaultModel"
                     defaultValue={connection?.defaultModel ?? selectableModels[0]}
                     className="rounded-control border border-line bg-surface-strong px-4 py-3"
@@ -158,7 +160,7 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
                         {model}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <span className="text-xs font-normal text-muted-foreground">
                     Mini and nano models are excluded. Cinatra's web scraping and data extraction requires full-size models — smaller models skip direct page visits and fall back to keyword searches, producing incomplete results.
                   </span>
