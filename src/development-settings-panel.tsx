@@ -1,4 +1,5 @@
 import { Button } from "./components/ui/button";
+import { Checkbox } from "./components/ui/checkbox";
 import { Label } from "./components/ui/label";
 
 export function OpenAIDevelopmentSettingsPanel({
@@ -26,8 +27,7 @@ export function OpenAIDevelopmentSettingsPanel({
 
       <form action={action} className="mt-6 flex flex-col gap-5">
         <Label className="flex items-start gap-3 rounded-control border border-line bg-surface-strong px-4 py-4">
-          <input
-            type="checkbox"
+          <Checkbox
             name="loggingEnabled"
             defaultChecked={loggingEnabled}
             className="mt-1 h-4 w-4 rounded border-line text-foreground"
