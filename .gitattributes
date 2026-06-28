@@ -1,5 +1,5 @@
 # Trim CI/internal noise from `git archive` output (incl. GitHub's auto
-# "Source code" release archives). Refs cinatra-ai/cinatra-engineering#56.
+# "Source code" release archives), per the org release-artifact standard.
 # Note: directory patterns use the /** form — bare `dir/` patterns do not
 # recurse reliably for export-ignore.
 .github/** export-ignore
