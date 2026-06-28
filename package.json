@@ -1,6 +1,6 @@
 {
   "name": "@cinatra-ai/openai-connector",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "license": "Apache-2.0",
   "type": "module",
   "files": [
@@ -53,6 +53,10 @@
   "cinatra": {
     "apiVersion": "cinatra.ai/v1",
     "kind": "connector",
+    "vendor": {
+      "key": "cinatra-ai",
+      "name": "Cinatra"
+    },
     "displayName": "OpenAI",
     "dependencies": [],
     "serverEntry": "./register",
