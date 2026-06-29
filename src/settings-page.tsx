@@ -73,18 +73,12 @@ export async function OpenAISettingsPage({ searchParams }: SettingsPageProps) {
     <main className="min-h-screen px-5 py-8 sm:px-8 lg:px-6 lg:py-6">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">OpenAI API</h1>
-            <span
-              className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                isConnected
-                  ? "bg-success/15 text-success"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {isConnected ? "Connected" : "Setup required"}
-            </span>
-          </div>
+          {/* The connection-status badge is HOST-injected on the connector
+              setup-page dispatch route — the same badge the /connectors card
+              shows — so the extension no longer renders its own status pill
+              here (it would duplicate the host badge). The title + form stay
+              extension-owned. */}
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">OpenAI API</h1>
           <p className="text-sm text-muted-foreground">
             Connect OpenAI through Nango for Cinatra&apos;s model-backed workflows.
           </p>
