@@ -62,6 +62,7 @@
     "serverEntry": "./register",
     "requestedHostPorts": [
       "capabilities"
-    ]
+    ],
+    "sdkAbiRange": "^2"
   }
 }
