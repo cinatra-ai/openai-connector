@@ -62,6 +62,13 @@ function activate(): RegisteredProvider {
       },
       resolveProviders: () => [],
     },
+    // The connector now declares the "ui" host port (schema-config, cinatra#782);
+    // the host always wires ctx.ui for it. Capture registrations inertly.
+    ui: {
+      registerSetupSurface: () => {},
+      registerSettingsSurface: () => {},
+      registerAction: () => {},
+    },
   } as never;
   register(ctx);
   expect(registered).toHaveLength(1);
@@ -140,6 +147,15 @@ function activateWithServices(impls: Record<string, unknown>) {
   );
   const ctx = {
     capabilities: { registerProvider: () => {}, resolveProviders },
+    // The connector declares the "ui" host port (schema-config, cinatra#782);
+    // the host wires ctx.ui. Register inertly — the "does NOT eagerly resolve a
+    // host service at register time" assertions below still hold because
+    // registering the ui actions never calls resolveProviders.
+    ui: {
+      registerSetupSurface: () => {},
+      registerSettingsSurface: () => {},
+      registerAction: () => {},
+    },
   } as never;
   register(ctx);
   return { resolveProviders };

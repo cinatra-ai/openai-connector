@@ -5,7 +5,6 @@ import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
 import type { HostRequiredPackageDefinition } from "@cinatra-ai/sdk-extensions";
 import { getOpenAIDeps } from "./deps";
 import type { OpenAIServiceTier } from "./openai-connection-types";
-export { OpenAIDevelopmentSettingsPanel } from "./development-settings-panel";
 export * from "./openai-skills";
 
 // Re-exported from the cycle-safe leaf (./log-directory) — defining the

@@ -43,6 +43,7 @@ import {
 } from "./index";
 import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
 import { makeOpenAIConnectionActions } from "./actions-core";
+import { registerOpenAIUiActions } from "./register-ui-actions";
 import { registerOpenAIConnector, type OpenAIConnectorDeps } from "./deps";
 
 const PACKAGE_NAME = "@cinatra-ai/openai-connector";
@@ -235,4 +236,18 @@ export function register(ctx: ExtensionHostContext): void {
       },
     },
   });
+
+  // ---- schema-config named actions (cinatra#782) ----
+  //
+  // The connector's setup/settings surface is now declared as DATA in
+  // package.json `cinatra.configSchema` (uiSurface:"schema-config"); the host
+  // renders it WITHOUT connector React. Its fields reference these host-
+  // registered named actions BY ID (READ/PROBE/WRITE), dispatched through
+  // `/api/extensions/{installId}/actions/{actionId}`. The connection writes
+  // REUSE the exact `actions-core` bodies (same validation/gating/model-list);
+  // the skills write calls `saveOpenAIShellSettings` directly with parsed
+  // arrays. Every action re-asserts the "manage" gate first (the host endpoint
+  // only enforces "use"-tier). Registration does no host I/O (probe-safe).
+  // Requires the "ui" host port (declared in cinatra.requestedHostPorts).
+  registerOpenAIUiActions(ctx, { requireManage, actions });
 }
