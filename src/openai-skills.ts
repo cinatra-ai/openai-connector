@@ -18,7 +18,6 @@ import {
   isPathUnderReadRoot as isPathUnderReadRootHelper,
   resolveContainerPathForHostPath as resolveContainerPathForHostPathHelper,
 } from "./openai-shell-mount-helpers";
-export { OpenAIAPISkillsSettingsPanel } from "./openai-skills-settings-panel";
 
 export type OpenAIShellSettings = {
   enabled: boolean;
