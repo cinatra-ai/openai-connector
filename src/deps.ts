@@ -49,7 +49,9 @@ export interface OpenAINangoCapability {
     displayName?: string;
   }): Promise<unknown>;
   /** Upsert a connection record by (providerConfigKey, connectionId). openai
-   *  PASSES connectorKey:"openai" + metadata so the cinatra-side pointer is saved. */
+   *  now OMITS `connectorKey` so the cinatra-side pointer is NOT auto-saved
+   *  before the readback verification (the pointer is saved via
+   *  `saveConnectionRecord` only after the readback compare passes). */
   importConnection(input: {
     connectorKey?: string;
     providerConfigKey: string;
@@ -63,6 +65,21 @@ export interface OpenAINangoCapability {
     providerConfigKey: string,
     connectionId: string,
     opts?: { forceRefresh?: boolean },
+  ): Promise<unknown>;
+  /** Persist the cinatra-side pointer row AFTER a verified readback.
+   *  `{ multiple: false }` enforces a single workspace-wide credential. The
+   *  pointer is the "verified + committed" signal `getConfiguredOpenAIAPIKey`
+   *  gates its Nango read on, so it must never be written before the readback
+   *  compare passes. */
+  saveConnectionRecord(
+    connectorKey: "openai",
+    record: {
+      connectionId: string;
+      providerConfigKey: string;
+      displayName?: string;
+      metadata?: Record<string, unknown>;
+    },
+    opts?: { multiple?: boolean },
   ): Promise<unknown>;
   /** Delete the Nango connection (scrubs stored credentials). */
   deleteConnection(providerConfigKey: string, connectionId: string): Promise<unknown>;

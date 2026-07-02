@@ -248,21 +248,40 @@ export async function getConfiguredOpenAIConnection(connection?: OpenAIConnectio
   return resolvedConnection.apiKey ? resolvedConnection : null;
 }
 
+// Accepts both the `{ apiKey: string }` object shape and the raw-string
+// fallback shape that `getCredentials` can return, so the credential read and
+// the readback compare stay consistent.
+function extractOpenAIApiKey(credentials: unknown): string | null {
+  if (credentials && typeof credentials === "object" && "apiKey" in credentials) {
+    const candidate = (credentials as { apiKey: unknown }).apiKey;
+    return typeof candidate === "string" ? candidate : null;
+  }
+  if (typeof credentials === "string") return credentials;
+  return null;
+}
+
 async function getConfiguredOpenAIAPIKey() {
   const { nango } = getOpenAIDeps();
   if (!nango.isConfigured()) {
     return null;
   }
+  // Require a saved local Nango pointer BEFORE reading the credential. Without
+  // this gate a save that imported the credential but failed readback
+  // verification (and therefore correctly skipped `saveConnectionRecord`) would
+  // still leak an unverified credential via the deterministic
+  // providerConfigKey/connectionId fallback. The pointer is the
+  // "verified + committed" signal.
   const savedConnection = nango.getPrimarySavedConnection("openai");
+  if (!savedConnection) {
+    return null;
+  }
 
   const credentials = await nango.getCredentials(
-    savedConnection?.providerConfigKey ?? nango.providerConfigKeys.openai,
-    savedConnection?.connectionId ?? nango.connectionIds.openai,
+    savedConnection.providerConfigKey,
+    savedConnection.connectionId,
   );
 
-  return credentials && typeof credentials === "object" && "apiKey" in credentials && typeof credentials.apiKey === "string"
-    ? credentials.apiKey
-    : null;
+  return extractOpenAIApiKey(credentials);
 }
 
 export async function syncOpenAIConnectionToNango(input: {
@@ -275,25 +294,70 @@ export async function syncOpenAIConnectionToNango(input: {
     return;
   }
 
+  const providerConfigKey = nango.providerConfigKeys.openai;
+  const connectionId = nango.connectionIds.openai;
+  const trimmedInput = input.apiKey.trim();
+  if (!trimmedInput) {
+    throw new Error("Enter an OpenAI API key to continue.");
+  }
+  const metadata = {
+    projectId: input.projectId ?? null,
+    organizationId: input.organizationId ?? null,
+  };
+
   await nango.ensureIntegration({
     provider: "openai",
-    providerConfigKey: nango.providerConfigKeys.openai,
+    providerConfigKey,
     displayName: "Cinatra OpenAI",
   });
 
+  // Readback-safe order (mirrors gemini/apify):
+  //   1. import WITHOUT `connectorKey` so the cinatra-side pointer is NOT
+  //      auto-written before verification.
+  //   2. forceRefresh readback + extract + compare against the trimmed input.
+  //      Any failure here — a value MISMATCH or a read ERROR — is treated as
+  //      unverified.
+  //   3. On failure, ROLL BACK fail-closed: the import already MUTATED the
+  //      credential at the deterministic (providerConfigKey, connectionId), so a
+  //      pre-existing saved pointer (a key rotation) would otherwise keep that
+  //      unverified credential reachable. Attempt BOTH cleanups regardless of
+  //      each other's outcome (allSettled) — deleting the connection OR dropping
+  //      the pointer each makes the credential unreachable via the pointer-gated
+  //      read, so one rejecting must not skip the other — then ALWAYS throw a
+  //      generic error (no token in the message); never proceed to save.
+  //   4. ONLY on a verified match save the pointer with `{ multiple: false }`.
   await nango.importConnection({
-    connectorKey: "openai",
-    providerConfigKey: nango.providerConfigKeys.openai,
-    connectionId: nango.connectionIds.openai,
-    credentials: {
-      type: "API_KEY",
-      apiKey: input.apiKey,
-    },
-    metadata: {
-      projectId: input.projectId ?? null,
-      organizationId: input.organizationId ?? null,
-    },
+    providerConfigKey,
+    connectionId,
+    credentials: { type: "API_KEY", apiKey: trimmedInput },
+    metadata,
   });
+
+  let readbackKey: string | null = null;
+  try {
+    const readback = await nango.getCredentials(providerConfigKey, connectionId, {
+      forceRefresh: true,
+    });
+    readbackKey = extractOpenAIApiKey(readback);
+  } catch {
+    readbackKey = null;
+  }
+
+  if (readbackKey !== trimmedInput) {
+    await Promise.allSettled([
+      nango.deleteConnection(providerConfigKey, connectionId),
+      nango.clearConnectionRecords("openai"),
+    ]);
+    throw new Error(
+      "Nango credential verification failed: the readback value did not match the saved credential.",
+    );
+  }
+
+  await nango.saveConnectionRecord(
+    "openai",
+    { connectionId, providerConfigKey, metadata },
+    { multiple: false },
+  );
 }
 
 export async function clearOpenAIConnectionFromNango() {
