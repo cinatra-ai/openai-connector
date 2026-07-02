@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { redactAuthorizationDeep } from "./log-redaction";
 import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
+import { enforceLogRetention } from "./log-retention";
+import { resolveLoggingEnabled } from "./logging-policy";
 import type { HostRequiredPackageDefinition } from "@cinatra-ai/sdk-extensions";
 import { getOpenAIDeps } from "./deps";
 import type { OpenAIServiceTier } from "./openai-connection-types";
@@ -137,9 +139,22 @@ function buildLogTimestamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
+// Fail-closed development-mode probe: resolves the host runtime-mode service,
+// treating any absence/error as PRODUCTION so body logging defaults OFF when the
+// signal is unavailable. Wrapped so the logging gate never throws.
+function isOpenAIDevelopmentMode(): boolean {
+  try {
+    return getOpenAIDeps().isAppDevelopmentMode();
+  } catch {
+    return false;
+  }
+}
+
 function isOpenAILoggingEnabled() {
   const connection = getOpenAIDeps().readOpenAIConnectionFromDatabase();
-  return connection?.loggingEnabled !== false;
+  // Default OFF in production (dev-only default-on): an explicit stored
+  // preference wins; unset follows the runtime mode.
+  return resolveLoggingEnabled(connection?.loggingEnabled, isOpenAIDevelopmentMode());
 }
 
 function sleep(milliseconds: number) {
@@ -149,7 +164,7 @@ function sleep(milliseconds: number) {
 export function getOpenAILoggingSettings() {
   const connection = getOpenAIDeps().readOpenAIConnectionFromDatabase();
   return {
-    enabled: connection?.loggingEnabled !== false,
+    enabled: resolveLoggingEnabled(connection?.loggingEnabled, isOpenAIDevelopmentMode()),
     directory: OPENAI_API_LOG_DIRECTORY,
   };
 }
@@ -178,6 +193,8 @@ export async function writeOpenAILogFile(input: {
   // Authorization header for every injected `type: "mcp"` server.
   const content = redactAuthorizationDeep(rawContent);
   await writeFile(path.join(OPENAI_API_LOG_DIRECTORY, filename), JSON.stringify(content, null, 2), "utf8");
+  // Rotate: cap the on-disk capture so logs can't grow unbounded (best-effort).
+  await enforceLogRetention(OPENAI_API_LOG_DIRECTORY);
 }
 
 export type OpenAIConnectionConfig = {
@@ -214,7 +231,12 @@ export async function getConfiguredOpenAIConnection(connection?: OpenAIConnectio
     projectId: connection?.projectId ?? storedConnection?.projectId,
     organizationId: connection?.organizationId ?? storedConnection?.organizationId,
     serviceTier: connection?.serviceTier ?? storedConnection?.serviceTier ?? getDefaultOpenAIServiceTier(),
-    loggingEnabled: connection?.loggingEnabled ?? storedConnection?.loggingEnabled ?? true,
+    // Unset defaults to dev-only (OFF in production), mirroring the write gate
+    // and the adjacent promptCaching default — never a blanket default-on.
+    loggingEnabled: resolveLoggingEnabled(
+      connection?.loggingEnabled ?? storedConnection?.loggingEnabled,
+      isOpenAIDevelopmentMode(),
+    ),
     promptCachingEnabled:
       connection?.promptCachingEnabled ??
       storedConnection?.promptCachingEnabled ??
