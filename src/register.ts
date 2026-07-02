@@ -140,6 +140,8 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
         nango().importNangoConnection(input as Parameters<NangoSystemSurface["importNangoConnection"]>[0]),
       getCredentials: (providerConfigKey, connectionId, opts) =>
         nango().getNangoCredentials(providerConfigKey, connectionId, opts),
+      saveConnectionRecord: (connectorKey, record, opts) =>
+        nango().saveNangoConnectionRecord(connectorKey, record, opts),
       deleteConnection: (providerConfigKey, connectionId) =>
         nango().deleteNangoConnection(providerConfigKey, connectionId),
       clearConnectionRecords: (connectorKey) => nango().clearNangoConnectionRecords(connectorKey),

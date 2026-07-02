@@ -87,14 +87,14 @@ export function makeOpenAIConnectionActions(requireManage: OpenAIManageGuard) {
     const existing = getOpenAIDeps().readOpenAIConnection();
     const defaultServiceTier = getDefaultOpenAIServiceTier();
     const apiKey = parsed.apiKey?.trim();
-    if (apiKey && getOpenAIDeps().nango.isConfigured()) {
-      await syncOpenAIConnectionToNango({
-        apiKey,
-        projectId: parsed.projectId || undefined,
-        organizationId: parsed.organizationId || undefined,
-      }).catch(() => null);
-    }
 
+    // Validate the credential against the real OpenAI API BEFORE persisting
+    // anything. `listAvailableOpenAIModels` validates the raw key directly (no
+    // Nango dependency), so validating first lets us gate the Nango pointer
+    // commit AND the DB write on a real success — an invalid key never leaves a
+    // committed credential behind (previously the credential was synced to Nango
+    // BEFORE this check, so a validation failure could still leave a readable
+    // pointer).
     let availableModels: string[];
 
     try {
@@ -106,6 +106,24 @@ export function makeOpenAIConnectionActions(requireManage: OpenAIManageGuard) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to validate the OpenAI API connection.";
       redirect(`${errorRedirectTo}?error=${encodeURIComponent(message)}`);
+    }
+
+    // Only NOW persist a new key to Nango — verify-before-persist: the sync
+    // imports WITHOUT the auto-pointer, readback-verifies, and commits the
+    // pointer only on a match. A sync/verification failure surfaces as an error
+    // redirect (never swallowed) and PREVENTS the DB write below, so a
+    // half-written or unverifiable credential can never masquerade as saved.
+    if (apiKey && getOpenAIDeps().nango.isConfigured()) {
+      try {
+        await syncOpenAIConnectionToNango({
+          apiKey,
+          projectId: parsed.projectId || undefined,
+          organizationId: parsed.organizationId || undefined,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to save the OpenAI API connection.";
+        redirect(`${errorRedirectTo}?error=${encodeURIComponent(message)}`);
+      }
     }
 
     const configuredConnection = await getConfiguredOpenAIConnection({
