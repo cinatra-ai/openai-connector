@@ -57,6 +57,7 @@
       "ui"
     ],
     "sdkAbiRange": "^2",
+    "providerConfigKey": "cinatra-openai",
     "uiSurface": "schema-config",
     "configSchema": {
       "title": "OpenAI",
