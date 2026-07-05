@@ -23,8 +23,8 @@
 // TYPE-ONLY; the manage-permission guard for the action impls arrives as a
 // VALUE through the host's `@cinatra-ai/host:extension-action-guard` service
 // (the same enforcement the SDK `requireExtensionAction` slot binds). The
-// imported package modules (index / log-directory / actions-core) carry no
-// SDK value imports.
+// imported package modules (index / log-capture-channel / actions-core) carry
+// no SDK value imports.
 
 import type { ExtensionHostContext, NangoSystemSurface } from "@cinatra-ai/sdk-extensions";
 import {
@@ -41,7 +41,7 @@ import {
   runOpenAIShellCommandInDocker,
   type OpenAIConnectionConfig,
 } from "./index";
-import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
+import { OPENAI_LOG_CAPTURE_CHANNEL } from "./log-capture-channel";
 import { makeOpenAIConnectionActions } from "./actions-core";
 import { registerOpenAIUiActions } from "./register-ui-actions";
 import { registerOpenAIConnector, type OpenAIConnectorDeps } from "./deps";
@@ -123,6 +123,14 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
     buildAppMcpSelfClientHeaders: () => selfClient().buildHeaders(),
     isAppDevelopmentMode: () => runtimeMode().isDevelopment(),
     createNotification: (input) => notifications().create(input),
+    // Host-owned capture (cinatra#981) — `ctx.logger.capture`/`captureDirectory`
+    // are ADDITIVE OPTIONAL minimum-minor methods (>=2.3.0); feature-detected so
+    // this connector still activates (logging degrades to a no-op) against an
+    // older host pinned below the 2.3.0 floor.
+    captureLog: async (channel, entry) => {
+      await ctx.logger.capture?.(channel, entry);
+    },
+    captureLogDirectory: (channel) => ctx.logger.captureDirectory?.(channel) ?? "",
     // Nango connection-storage members delegate to the connector-authored
     // nango-system surface at CALL time (the key maps are getters for the
     // same reason). `importConnection`/`ensureIntegration` inputs are cast at
@@ -202,7 +210,8 @@ export function register(ctx: ExtensionHostContext): void {
       serviceTierOptions: OPENAI_SERVICE_TIER_OPTIONS,
       getLoggingSettings: () => getOpenAILoggingSettings(),
       saveLoggingSettings: (enabled: boolean) => saveOpenAILoggingSettings(enabled),
-      logDirectory: OPENAI_API_LOG_DIRECTORY,
+      // Host-resolved (cinatra#981) — was a connector-owned `node:fs` path.
+      logDirectory: ctx.logger.captureDirectory?.(OPENAI_LOG_CAPTURE_CHANNEL) ?? "",
       // LLM provider adapter cutover (cinatra#151 Stage 2): the host's
       // packages/llm resolves these at call time instead of value-importing
       // the package. `writeLogFile` keeps the connector's logging-enabled
