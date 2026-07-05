@@ -117,6 +117,14 @@ export interface OpenAIConnectorDeps {
   }) => Promise<void>;
   /** Nango connection-storage surface (host-bound from the nango-connector extension). */
   nango: OpenAINangoCapability;
+  /** Host-owned request/response log capture — `ctx.logger.capture` (cinatra#981).
+   *  Storage/rotation is entirely host-side; this connector still owns the
+   *  enabled/opt-in gate (`resolveLoggingEnabled`) and the Authorization
+   *  redaction, passing only an already-redacted `entry.body`. */
+  captureLog: (channel: string, entry: { label: string; kind: "request" | "response"; body: unknown }) => Promise<void>;
+  /** The host-resolved on-disk directory `captureLog` entries land in — a
+   *  read-only display value for the telemetry page (cinatra#981). */
+  captureLogDirectory: (channel: string) => string;
   /** Read the skills catalog — NARROW structural return: only the fields the
    *  shell-skill mounting path reads from each skill. */
   readSkillsCatalog(): Promise<{
