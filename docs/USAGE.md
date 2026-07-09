@@ -55,7 +55,7 @@ If your Cinatra instance has Nango configured, the connector stores and retrieve
 
 ### Shell tool settings (optional)
 
-The sandboxed shell tool is **enabled by default** but has no effect until an agent is explicitly configured to use it. Shell settings are under **Settings → LLM → OpenAI Skills**.
+The sandboxed shell tool is **enabled by default** but has no effect until an agent is explicitly configured to use it. Shell settings are on the **Local shell** tab of **Settings → LLM → OpenAI**.
 
 | Setting | Default | Description |
 |---|---|---|
@@ -110,7 +110,7 @@ The `logLabel` is used to name the request/response log files written to the con
 
 The shell tool lets agents run commands in an isolated Docker container. To use it:
 
-1. Enable the shell tool in **Settings → LLM → OpenAI Skills**.
+1. Enable the shell tool on the **Local shell** tab of **Settings → LLM → OpenAI**.
 2. Configure allowed commands, read/write roots, and resource limits.
 3. Optionally mount catalogue skills into the container so agents can invoke them.
 
@@ -205,11 +205,11 @@ The connector calls the OpenAI models endpoint during save to validate the key. 
 
 ### Shell commands are rejected
 
-Check that the command prefix (the first word, e.g. `python3`) is in the allowed command prefixes list and not in the blocked list. Update the list under **Settings → LLM → OpenAI Skills**.
+Check that the command prefix (the first word, e.g. `python3`) is in the allowed command prefixes list and not in the blocked list. Update the list on the **Local shell** tab of **Settings → LLM → OpenAI**.
 
 ### A skill cannot be mounted
 
-A skill must be stored as a local directory on disk and that directory must be inside one of the configured read roots. The skills settings page shows the reason a skill is not mountable. Check that the skill's source path exists on the host and is listed (or under a listed path) in the read roots.
+A skill must be stored as a local directory on disk and that directory must be inside one of the configured read roots. Use the Local shell tab to ensure the skill's source path is under a configured read root; mount failures report the specific reason.
 
 ### API request/response logs
 

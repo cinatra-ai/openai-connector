@@ -16,7 +16,8 @@
 // `requireManage` — defense in depth over the host's use-tier dispatch gate.
 //   - READ  (currentConfig, listModels): manage-gated — they disclose admin
 //            config / use the saved key.
-//   - PROBE (connectionStatus): manage-gated — same admin-only surface.
+//   - PROBE (connectionStatus): manage-gated — same admin-only surface. Doubles
+//            as the Help tab's `advisory` readiness probe (cinatra#57).
 //   - WRITE (saveConnection, clearConnection): manage-gated here AND the reused
 //            `actions-core` body gates again as its FIRST statement (the host
 //            test pins that) — double-gated on the connection path.
@@ -316,18 +317,25 @@ export function registerOpenAIUiActions(
     },
   });
 
-  // ---- PROBE: connection status for the `status-probe` field. Manage-gated.
-  //      Resolves OK only when a validated key resolves; throws otherwise so the
-  //      probe renders the "failed" pill with the reason.
+  // ---- PROBE: connection status for the `status-probe` field (Setup tab) AND
+  //      the `advisory` field (Help tab, cinatra#57). Manage-gated. Resolves
+  //      `{connected:true, ready:true}` only when a validated key resolves;
+  //      throws otherwise. `status-probe` only checks the dispatch's `ok` flag
+  //      (never reads the result body), so the added `ready` key is a pure
+  //      additive widening — it cannot regress that pill. `invokeAction` (the
+  //      shared client-side dispatch wrapper) turns the throw into `{ok:false,
+  //      error}`, which the `advisory` field's renderer maps to its
+  //      `whenNotReady` copy — so the SAME probe drives both surfaces without a
+  //      second registered action.
   ctx.ui.registerAction({
     id: "connectionStatus",
-    handler: async (): Promise<{ connected: true }> => {
+    handler: async (): Promise<{ connected: true; ready: true }> => {
       await requireManage();
       const connection = await getConfiguredOpenAIConnection();
       if (!isOpenAIConnectionReady(connection ?? undefined)) {
         throw new Error("OpenAI is not connected. Save a validated API key first.");
       }
-      return { connected: true };
+      return { connected: true, ready: true };
     },
   });
 
