@@ -157,9 +157,14 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
     expect(listAvailableOpenAIModelsMock).not.toHaveBeenCalled();
   });
 
-  it("connectionStatus returns {connected:true} when ready, throws when not (manage-gated)", async () => {
+  it("connectionStatus returns {connected:true, ready:true} when ready, throws when not (manage-gated)", async () => {
+    // `ready:true` (cinatra#57) is a pure widening alongside `connected:true` —
+    // the Setup tab's `status-probe` field only checks the dispatch's `ok`
+    // flag (never reads the result body), so this cannot regress it; the
+    // SAME action also drives the Help tab's `advisory` field, which DOES read
+    // `result.ready`.
     const ready = makeHarness();
-    expect(await ready.get("connectionStatus").handler({})).toEqual({ connected: true });
+    expect(await ready.get("connectionStatus").handler({})).toEqual({ connected: true, ready: true });
 
     isOpenAIConnectionReadyMock.mockReturnValue(false);
     const notReady = makeHarness();

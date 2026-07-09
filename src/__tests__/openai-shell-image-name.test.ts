@@ -2,12 +2,16 @@
 //
 // The connector cannot import the monorepo build sites, so this asserts the
 // connector half of the contract: the DEFAULT container image the connector
-// `docker run`s MUST equal the monorepo build tag in `scripts/setup.sh` and
-// `packages/cli/src/index.mjs` (`cinatra/skill-shell:latest`). If they drift, a
+// `docker run`s MUST equal the build tag that `cinatra-ai/cinatra`'s
+// `scripts/setup.sh` and `cinatra-ai/cinatra-cli`'s `src/index.mjs` each
+// independently build/discover via the `extensions/*/*/runtime/Dockerfile`
+// glob (`cinatra/skill-shell:latest`) — this package's `runtime/` directory is
+// the single canonical source both of them resolve. If they drift, a
 // freshly-built image is never the one `docker run` resolves to ("image not
 // found"). It also asserts the runtime path constant is module-anchored at the
 // package's own `runtime/` dir, not the dead `packages/connector-openai/runtime`
-// path dropped during the connector extraction.
+// path dropped during the connector extraction (from before this connector was
+// split out of the monorepo).
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
