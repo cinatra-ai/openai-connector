@@ -931,7 +931,7 @@ const SCHEMA_CONFIG_ALLOWED_KEYS = {
   "repeatable-list": new Set(["kind", "key", "label", "itemLabel", "itemFields", "description"]),
   "status-probe": new Set(["kind", "label", "actionId", "description"]),
   "copyable-credential": new Set(["kind", "key", "label", "description"]),
-  "named-action": new Set(["kind", "label", "actionId", "confirm", "description"]),
+  "named-action": new Set(["kind", "label", "actionId", "confirm", "role", "description"]),
   select: new Set(["kind", "key", "label", "options", "defaultValue", "description"]),
   "record-list": new Set([
     "kind", "label", "listActionId", "deleteActionId", "emptyState",
@@ -993,6 +993,12 @@ function validateConfigSchemaField(kind, raw, at, errors, seenKeys) {
   }
   if ((kind === "status-probe" || kind === "named-action") && (!nonEmptyStr(raw.actionId) || !SCHEMA_CONFIG_KEY_RE.test(raw.actionId))) {
     errors.push(`${at}: ${kind} requires a valid "actionId"`);
+  }
+  // Optional canonical connection-action role — a CLOSED allowlist (mirrors the
+  // host parser in src/lib/extension-schema-config.ts: role ∈ {connect,
+  // disconnect}). Absent → a plain named action (back-compat).
+  if (kind === "named-action" && raw.role !== undefined && raw.role !== "connect" && raw.role !== "disconnect") {
+    errors.push(`${at}: named-action "role" must be "connect" or "disconnect" when present`);
   }
   if (kind === "repeatable-list") {
     const items = raw.itemFields;

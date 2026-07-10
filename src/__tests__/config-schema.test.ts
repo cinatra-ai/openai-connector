@@ -75,9 +75,15 @@ describe("openai-connector cinatra.configSchema", () => {
     const namedActionIds = byKind(setupFields, "named-action").map((f) => (f as { actionId: string }).actionId);
     expect(namedActionIds).toEqual(expect.arrayContaining(["saveConnection", "clearConnection"]));
     expect(namedActionIds).not.toContain("saveSkillsSettings");
-    const clear = byKind(setupFields, "named-action").find((f) => (f as { actionId: string }).actionId === "clearConnection") as { confirm?: string };
-    expect(typeof clear.confirm).toBe("string");
-    expect((clear.confirm ?? "").length).toBeGreaterThan(0);
+    // Owner ruling (epic #1101, 2026-07-10): the connection actions carry the
+    // canonical connect/disconnect roles so the host renders the plug/unplug
+    // Connect / Disconnect pair. clearConnection drops its `confirm` — the
+    // renderer's neutral AlertDialog is now the sole confirmation path.
+    const save = byKind(setupFields, "named-action").find((f) => (f as { actionId: string }).actionId === "saveConnection") as { role?: string };
+    const clear = byKind(setupFields, "named-action").find((f) => (f as { actionId: string }).actionId === "clearConnection") as { role?: string; confirm?: string };
+    expect(save.role).toBe("connect");
+    expect(clear.role).toBe("disconnect");
+    expect(clear.confirm).toBeUndefined();
 
     // status probe + result banner.
     expect(byKind(setupFields, "status-probe")[0]?.actionId).toBe("connectionStatus");
