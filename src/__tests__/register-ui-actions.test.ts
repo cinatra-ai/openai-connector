@@ -181,6 +181,16 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
     isOpenAIConnectionReadyMock.mockReturnValue(true);
   });
 
+  it("currentConfig: a DENYING manage gate prevents both persisted reads (fail-closed)", async () => {
+    const requireManage = vi.fn(async () => {
+      throw new Error("manage tier required");
+    });
+    const { get } = makeHarness({ requireManage });
+    await expect(get("currentConfig").handler({})).rejects.toThrow(/manage tier required/);
+    expect(readOpenAIConnectionMock).not.toHaveBeenCalled();
+    expect(readOpenAIShellSettingsMock).not.toHaveBeenCalled();
+  });
+
   it("currentConfig manage-gates, returns persisted values, and NEVER returns the apiKey (write-only secret)", async () => {
     const requireManage = vi.fn(async () => {});
     const { get } = makeHarness({ requireManage });

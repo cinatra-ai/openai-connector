@@ -340,8 +340,10 @@ export function registerOpenAIUiActions(
   });
 
   // ---- READ: the persisted setup values, as a flat string map, for the
-  //      renderer's `initialValues` (once the host dispatch route threads it —
-  //      see the PR's blocked-on note / host follow-up). Manage-gated: it
+  //      renderer's `initialValues`. The manifest declares this action as the
+  //      root `hydrateAction`, so the host invokes it SERVER-SIDE while
+  //      rendering the setup page and threads the sanitized NON-SECRET result
+  //      into the form (side-effect-free idempotent read). Manage-gated: it
   //      round-trips the admin-only shell SECURITY policy. NEVER returns the
   //      apiKey (write-only secret) — the secret field always renders empty.
   ctx.ui.registerAction({
