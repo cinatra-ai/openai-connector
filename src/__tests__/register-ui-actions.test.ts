@@ -14,6 +14,7 @@
 // from the real index/deps.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import pkg from "../../package.json" with { type: "json" };
 
 // The skills write handler calls saveOpenAIShellSettings, and the READ handlers
 // call the index model-list / connection helpers + readOpenAIShellSettings. Mock
@@ -131,6 +132,14 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
     );
   });
 
+  it("the manifest's root hydrateAction names a REGISTERED action (the hydration read resolves)", () => {
+    const declared = (pkg as { cinatra?: { configSchema?: { hydrateAction?: string } } })
+      .cinatra?.configSchema?.hydrateAction;
+    expect(declared).toBe("currentConfig");
+    const { uiActions } = makeHarness();
+    expect(uiActions.map((a) => a.id)).toContain(declared);
+  });
+
   it("registration does NOT eagerly call the host (probe-safe)", () => {
     makeHarness();
     expect(listAvailableOpenAIModelsMock).not.toHaveBeenCalled();
@@ -170,6 +179,16 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
     const notReady = makeHarness();
     await expect(notReady.get("connectionStatus").handler({})).rejects.toThrow(/not connected/i);
     isOpenAIConnectionReadyMock.mockReturnValue(true);
+  });
+
+  it("currentConfig: a DENYING manage gate prevents both persisted reads (fail-closed)", async () => {
+    const requireManage = vi.fn(async () => {
+      throw new Error("manage tier required");
+    });
+    const { get } = makeHarness({ requireManage });
+    await expect(get("currentConfig").handler({})).rejects.toThrow(/manage tier required/);
+    expect(readOpenAIConnectionMock).not.toHaveBeenCalled();
+    expect(readOpenAIShellSettingsMock).not.toHaveBeenCalled();
   });
 
   it("currentConfig manage-gates, returns persisted values, and NEVER returns the apiKey (write-only secret)", async () => {

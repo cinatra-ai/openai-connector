@@ -62,6 +62,7 @@
     "uiSurface": "schema-config",
     "configSchema": {
       "title": "OpenAI",
+      "hydrateAction": "currentConfig",
       "description": "Connect OpenAI through Nango for Cinatra's model-backed workflows, and configure the sandboxed shell-skill executor policy. Only workspace admins can change these settings.",
       "fields": [
         {
