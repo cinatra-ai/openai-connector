@@ -14,6 +14,7 @@
 // from the real index/deps.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import pkg from "../../package.json" with { type: "json" };
 
 // The skills write handler calls saveOpenAIShellSettings, and the READ handlers
 // call the index model-list / connection helpers + readOpenAIShellSettings. Mock
@@ -129,6 +130,14 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
     expect(uiActions.map((a) => a.id).sort()).toEqual(
       ["clearConnection", "connectionStatus", "currentConfig", "listModels", "saveConnection", "saveSkillsSettings"].sort(),
     );
+  });
+
+  it("the manifest's root hydrateAction names a REGISTERED action (the hydration read resolves)", () => {
+    const declared = (pkg as { cinatra?: { configSchema?: { hydrateAction?: string } } })
+      .cinatra?.configSchema?.hydrateAction;
+    expect(declared).toBe("currentConfig");
+    const { uiActions } = makeHarness();
+    expect(uiActions.map((a) => a.id)).toContain(declared);
   });
 
   it("registration does NOT eagerly call the host (probe-safe)", () => {

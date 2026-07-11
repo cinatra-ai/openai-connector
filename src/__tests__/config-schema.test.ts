@@ -44,6 +44,14 @@ describe("openai-connector cinatra.configSchema", () => {
     expect(cinatra.requestedHostPorts).toContain("capabilities");
   });
 
+  it("opts in to setup-form hydration: root hydrateAction names the existing currentConfig read action", () => {
+    // The host invokes the declared action SERVER-SIDE at setup render and
+    // threads the sanitized NON-SECRET result in as the form's initialValues.
+    // currentConfig is the connector's existing manage-gated persisted-values
+    // read (see register-ui-actions.test.ts — it never returns the apiKey).
+    expect((configSchema as { hydrateAction?: string }).hydrateAction).toBe("currentConfig");
+  });
+
   it("the declared configSchema parses with ZERO validation errors", () => {
     expect(validateConfigSchema(configSchema)).toEqual([]);
   });
@@ -263,6 +271,17 @@ describe("openai-connector cinatra.configSchema", () => {
       expect(validateConfigSchema(wrap({ kind: "free-list", label: "L" })).length).toBeGreaterThan(0);
       expect(validateConfigSchema(wrap({ kind: "number", label: "N" })).length).toBeGreaterThan(0);
       expect(validateConfigSchema(wrap({ kind: "boolean", label: "B" })).length).toBeGreaterThan(0);
+    });
+
+    it("rejects a malformed root hydrateAction declaration (fail-closed, same grammar as every actionId)", () => {
+      const base = { fields: [{ kind: "text", key: "k", label: "K" }] };
+      expect(validateConfigSchema({ ...base, hydrateAction: "currentConfig" })).toEqual([]);
+      for (const bad of ["", "1bad", "../x", 42, {}]) {
+        expect(
+          validateConfigSchema({ ...base, hydrateAction: bad }),
+          `expected hydrateAction ${JSON.stringify(bad)} to be rejected`,
+        ).toContain('configSchema: "hydrateAction" must be a valid actionId string');
+      }
     });
 
     it("rejects an UNKNOWN key on a new-kind field (no executable/HTML carrier smuggled in)", () => {
