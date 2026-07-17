@@ -9,8 +9,8 @@
 // `parseSchemaConfig` in src/lib/extension-schema-config.ts). They also pin the
 // cinatra#782 field-kind grammar (dynamic-select-options / boolean / number /
 // free-list) AND the cinatra#57 tab-group reorg (design spec: app-connectors
-// §II — a "Setup" base tab, a custom "Local shell" tab, and a reserved "Help"
-// tab always last), catching a connector<->host vocabulary skew at author time.
+// §II — a "Setup" base tab and a reserved "Help" tab always last), catching a
+// connector<->host vocabulary skew at author time.
 
 import { describe, expect, it } from "vitest";
 // The package.json is the manifest the host materializes; the configSchema under
@@ -26,12 +26,10 @@ type Field = Record<string, unknown>;
 type Tab = { id: string; label: string; fields: Field[] };
 
 // The base `fields` render as the host's reserved "Setup" tab (connection
-// fields); `tabs[]` are the connector's declared custom tabs (Local shell,
-// then the reserved Help tab, which the host always orders last regardless of
-// declared position — declared last here too, for source clarity).
+// fields); `tabs[]` is the connector's declared custom tab — just the reserved
+// Help tab, which the host always orders last.
 const setupFields = (configSchema as { fields: Field[] }).fields;
 const tabs = (configSchema as { tabs?: Tab[] }).tabs ?? [];
-const shellTab = tabs.find((t) => t.id === "shell");
 const helpTab = tabs.find((t) => t.id === "help");
 
 const byKind = (list: Field[], k: string) => list.filter((f) => f.kind === k);
@@ -78,8 +76,8 @@ describe("openai-connector cinatra.configSchema", () => {
     expect(model.kind).toBe("dynamic-select-options");
     expect(model.optionsAction).toBe("listModels");
 
-    // save + clear connection are named actions on the Setup tab; the skills
-    // save action lives on the Local shell tab (checked below), NOT here.
+    // save + clear connection are named actions on the Setup tab; the retired
+    // shell skills save action (saveSkillsSettings) is gone entirely.
     const namedActionIds = byKind(setupFields, "named-action").map((f) => (f as { actionId: string }).actionId);
     expect(namedActionIds).toEqual(expect.arrayContaining(["saveConnection", "clearConnection"]));
     expect(namedActionIds).not.toContain("saveSkillsSettings");
@@ -101,14 +99,13 @@ describe("openai-connector cinatra.configSchema", () => {
     );
   });
 
-  describe("tab groups (design spec: app-connectors §II — Setup, Local shell, Help last)", () => {
-    it("declares exactly two custom tabs, in order: Local shell, then the reserved Help tab LAST", () => {
-      expect(tabs.map((t) => t.id)).toEqual(["shell", "help"]);
-      expect(shellTab?.label).toBe("Local shell");
+  describe("tab groups (design spec: app-connectors §II — Setup, Help last)", () => {
+    it("declares exactly one custom tab: the reserved Help tab", () => {
+      expect(tabs.map((t) => t.id)).toEqual(["help"]);
       expect(helpTab?.label).toBe("Help");
     });
 
-    it("moved every shell/sandbox field OFF the Setup tab and onto the Local shell tab", () => {
+    it("declares no shell/sandbox fields anywhere (the in-process shell surface is retired)", () => {
       const shellKeys = [
         "enabled", "runnerLabel", "containerImage", "containerWorkspacePath",
         "containerCpuLimit", "containerMemoryLimit", "containerPidsLimit",
@@ -117,50 +114,9 @@ describe("openai-connector cinatra.configSchema", () => {
         "allowedCommandPrefixes", "blockedCommandPrefixes", "allowedHosts",
       ];
       for (const key of shellKeys) {
-        expect(byKey(setupFields, key), `${key} must NOT be on the Setup tab anymore`).toBeUndefined();
-        expect(byKey(shellTab!.fields, key), `${key} must be on the Local shell tab`).toBeDefined();
+        expect(byKey(setupFields, key), `${key} must not be on the Setup tab`).toBeUndefined();
+        expect(byKey(helpTab!.fields, key), `${key} must not be on the Help tab`).toBeUndefined();
       }
-    });
-
-    it("Local shell tab covers: boolean toggles, numeric limits with bounds, free-form list editors, its own save action + result banner", () => {
-      const shellFields = shellTab!.fields;
-
-      // boolean toggles.
-      for (const key of ["enabled", "allowNetwork", "auditLogsEnabled"]) {
-        expect(byKey(shellFields, key)?.kind, `${key} must be a boolean toggle`).toBe("boolean");
-      }
-
-      // numeric limits carry the SAME clamp bounds the store enforces.
-      const numberBounds: Record<string, { min: number; max: number }> = {
-        containerPidsLimit: { min: 16, max: 2048 },
-        maxExecutionSeconds: { min: 5, max: 600 },
-        maxOutputKilobytes: { min: 16, max: 4096 },
-        maxFileWriteKilobytes: { min: 16, max: 4096 },
-      };
-      for (const [key, bounds] of Object.entries(numberBounds)) {
-        const f = byKey(shellFields, key) as { kind: string; min?: number; max?: number };
-        expect(f.kind, `${key} must be a number field`).toBe("number");
-        expect(f.min).toBe(bounds.min);
-        expect(f.max).toBe(bounds.max);
-      }
-
-      // free-form string lists (distinct from the structured repeatable-list).
-      for (const key of ["readRoots", "writeRoots", "allowedCommandPrefixes", "blockedCommandPrefixes", "allowedHosts"]) {
-        expect(byKey(shellFields, key)?.kind, `${key} must be a free-list`).toBe("free-list");
-      }
-
-      // its own save action.
-      const namedActionIds = byKind(shellFields, "named-action").map((f) => (f as { actionId: string }).actionId);
-      expect(namedActionIds).toContain("saveSkillsSettings");
-
-      // a duplicated "Result" banner — the renderer's bannerName state is
-      // shared/global but each tab is a separate hidden/shown panel, so this
-      // tab needs its OWN banner row to show save feedback while active.
-      const banner = byKind(shellFields, "banner")[0] as { variants: Array<{ name: string }> } | undefined;
-      expect(banner, "Local shell tab must carry its own Result banner").toBeDefined();
-      expect(banner!.variants.map((v) => v.name)).toEqual(
-        expect.arrayContaining(["saved", "cleared", "error"]),
-      );
     });
 
     it('Help tab is READ-ONLY (no form, no Save): exactly one advisory field, no keyed/action-writing field kinds', () => {
@@ -199,7 +155,7 @@ describe("openai-connector cinatra.configSchema", () => {
     });
 
     it("every field key stays unique across the Setup tab AND every custom tab (one flat submit namespace)", () => {
-      const allKeyed = [...setupFields, ...(shellTab?.fields ?? []), ...(helpTab?.fields ?? [])]
+      const allKeyed = [...setupFields, ...(helpTab?.fields ?? [])]
         .map((f) => (f as { key?: string }).key)
         .filter((k): k is string => typeof k === "string");
       expect(new Set(allKeyed).size).toBe(allKeyed.length);

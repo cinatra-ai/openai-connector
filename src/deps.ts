@@ -117,20 +117,6 @@ export interface OpenAIConnectorDeps {
   }) => Promise<void>;
   /** Nango connection-storage surface (host-bound from the nango-connector extension). */
   nango: OpenAINangoCapability;
-  /** Read the skills catalog — NARROW structural return: only the fields the
-   *  shell-skill mounting path reads from each skill. */
-  readSkillsCatalog(): Promise<{
-    skills: Array<{
-      id: string;
-      name: string;
-      slug: string;
-      description: string;
-      packageId: string;
-      packageName: string;
-      packageSlug: string;
-      sourcePath?: string;
-    }>;
-  }>;
 }
 
 const OPENAI_DEPS_KEY = Symbol.for("@cinatra-ai/openai-connector:host-deps/v1");

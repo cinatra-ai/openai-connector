@@ -7,7 +7,6 @@ import { resolveLoggingEnabled } from "./logging-policy";
 import type { HostRequiredPackageDefinition } from "@cinatra-ai/sdk-extensions";
 import { getOpenAIDeps } from "./deps";
 import type { OpenAIServiceTier } from "./openai-connection-types";
-export * from "./openai-skills";
 
 // Re-exported from the cycle-safe leaf (./log-directory) — defining the
 // `const` in the barrel caused an ESM Temporal Dead Zone ReferenceError

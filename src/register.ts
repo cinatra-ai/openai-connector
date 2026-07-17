@@ -37,8 +37,6 @@ import {
   getOpenAILoggingSettings,
   saveOpenAILoggingSettings,
   writeOpenAILogFile,
-  readOpenAIShellSettings,
-  runOpenAIShellCommandInDocker,
   type OpenAIConnectionConfig,
 } from "./index";
 import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
@@ -71,7 +69,6 @@ type HostOpenAIConnectionShape = {
 type HostMcpSelfClientShape = { buildHeaders(): Record<string, string> };
 type HostRuntimeModeShape = { isDevelopment(): boolean };
 type HostNotificationsShape = { create: OpenAIConnectorDeps["createNotification"] };
-type HostSkillsCatalogShape = { read: OpenAIConnectorDeps["readSkillsCatalog"] };
 
 /** Lazy per-concern host-service resolution (fail-loud on a missing service —
  * the host boot wiring publishes these before any connector call runs). */
@@ -109,7 +106,6 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
   const selfClient = () => hostService<HostMcpSelfClientShape>(ctx, "@cinatra-ai/host:mcp-self-client");
   const runtimeMode = () => hostService<HostRuntimeModeShape>(ctx, "@cinatra-ai/host:runtime-mode");
   const notifications = () => hostService<HostNotificationsShape>(ctx, "@cinatra-ai/host:notifications");
-  const skillsCatalog = () => hostService<HostSkillsCatalogShape>(ctx, "@cinatra-ai/host:skills-catalog");
   const nango = () => nangoSystem(ctx);
   return {
     readConnectorConfigFromDatabase: <T,>(connectorId: string, fallback: T): T =>
@@ -155,7 +151,6 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
         return { openai: nango().connectionIds.openai };
       },
     },
-    readSkillsCatalog: () => skillsCatalog().read(),
   };
 }
 
@@ -209,32 +204,9 @@ export function register(ctx: ExtensionHostContext): void {
       // check + redaction; absence host-side degrades to a no-op.
       writeLogFile: (input: { label: string; kind: "request" | "response"; body: unknown }) =>
         writeOpenAILogFile({ label: input.label, kind: input.kind, body: input.body }),
-      // GATED shell-tool member (least privilege): a settings reader + the
-      // docker-confined executor — never a raw client/spawn handle. The
-      // STORED settings are the single policy authority: this ABI accepts NO
-      // administration/settings override (fields are picked explicitly, never
-      // spread), so the connector-side enabled/allowlist/limit gating in
-      // `runOpenAIShellCommandInDocker` cannot be bypassed through the
-      // capability surface.
-      shellTools: {
-        readSettings: () => readOpenAIShellSettings(),
-        runCommandInDocker: (input: {
-          shellCommand: string;
-          cwd?: string;
-          timeoutMs?: number;
-          maxOutputLength?: number;
-        }) =>
-          runOpenAIShellCommandInDocker({
-            shellCommand: input.shellCommand,
-            cwd: input.cwd,
-            timeoutMs: input.timeoutMs,
-            maxOutputLength: input.maxOutputLength,
-          }),
-      },
       actions: {
         saveConnection: (formData: FormData) => actions.saveConnection(formData),
         clearConnection: () => actions.clearConnection(),
-        saveSkillsSettings: (formData: FormData) => actions.saveSkillsSettings(formData),
       },
     },
   });
@@ -246,9 +218,8 @@ export function register(ctx: ExtensionHostContext): void {
   // renders it WITHOUT connector React. Its fields reference these host-
   // registered named actions BY ID (READ/PROBE/WRITE), dispatched through
   // `/api/extensions/{installId}/actions/{actionId}`. The connection writes
-  // REUSE the exact `actions-core` bodies (same validation/gating/model-list);
-  // the skills write calls `saveOpenAIShellSettings` directly with parsed
-  // arrays. Every action re-asserts the "manage" gate first (the host endpoint
+  // REUSE the exact `actions-core` bodies (same validation/gating/model-list).
+  // Every action re-asserts the "manage" gate first (the host endpoint
   // only enforces "use"-tier). Registration does no host I/O (probe-safe).
   // Requires the "ui" host port (declared in cinatra.requestedHostPorts).
   registerOpenAIUiActions(ctx, { requireManage, actions });
