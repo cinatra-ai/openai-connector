@@ -1,6 +1,6 @@
 // Pure request/response body-logging policy (dependency-free leaf, unit-tested
-// directly — the index barrel that owns the writer pulls @openai/agents and so
-// can't be imported in this package's vitest sandbox).
+// directly — kept independent of the index barrel and its transitive host-dep
+// imports so it can be imported in this package's vitest sandbox).
 //
 // SECURITY DEFAULT: full LLM request/response bodies (prompts, completions, and
 // any resolved auth material) must NOT be written to disk by default in

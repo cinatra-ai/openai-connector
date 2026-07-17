@@ -1,4 +1,4 @@
-// OpenAI connection/skills action CORE — the action bodies, parameterized by
+// OpenAI connection action CORE — the action bodies, parameterized by
 // the manage-permission guard. Two build sites consume this factory:
 //   - `./actions.ts` ("use server"): the static server actions, guarded by the
 //     SDK's `requireExtensionAction` (unchanged public behavior);
@@ -19,7 +19,6 @@ import {
   getDefaultOpenAIServiceTier,
   getConfiguredOpenAIConnection,
   listAvailableOpenAIModels,
-  saveOpenAIShellSettings,
   syncOpenAIConnectionToNango,
 } from "./index";
 
@@ -33,39 +32,6 @@ const openAIConnectionSchema = z.object({
   serviceTier: z.enum(["default", "flex", "priority"]).optional(),
   defaultModel: z.string().optional(),
   promptCachingEnabled: z.string().optional(),
-});
-
-// Persist the FULL security-relevant settings shape rendered by the admin
-// panel. Previously only enabled/runnerLabel/image/workspace/cpu/memory were
-// parsed, so the network toggle, audit toggle, read/write roots, command
-// allow/block lists, allowed egress hosts, and the resource limits the UI shows
-// were silently dropped on save — admins believed they had tightened the policy
-// when nothing changed. `saveOpenAIShellSettings` owns list normalization and
-// integer clamping, so the schema only needs to admit the raw field shapes;
-// number-like fields arrive as strings from FormData and are clamped downstream.
-const numberFromForm = z
-  .union([z.string(), z.number()])
-  .optional()
-  .transform((value) => (value === undefined || value === "" ? undefined : Number(value)));
-
-const openAISkillsSettingsSchema = z.object({
-  enabled: z.boolean().optional(),
-  runnerLabel: z.string().optional(),
-  containerImage: z.string().optional(),
-  containerWorkspacePath: z.string().optional(),
-  containerCpuLimit: z.string().optional(),
-  containerMemoryLimit: z.string().optional(),
-  containerPidsLimit: numberFromForm,
-  allowNetwork: z.boolean().optional(),
-  auditLogsEnabled: z.boolean().optional(),
-  readRoots: z.string().optional(),
-  writeRoots: z.string().optional(),
-  allowedCommandPrefixes: z.string().optional(),
-  blockedCommandPrefixes: z.string().optional(),
-  allowedHosts: z.string().optional(),
-  maxExecutionSeconds: numberFromForm,
-  maxOutputKilobytes: numberFromForm,
-  maxFileWriteKilobytes: numberFromForm,
 });
 
 export function makeOpenAIConnectionActions(requireManage: OpenAIManageGuard) {
@@ -173,41 +139,5 @@ export function makeOpenAIConnectionActions(requireManage: OpenAIManageGuard) {
     redirect("/configuration/llm/initial-setup");
   }
 
-  // OpenAI shell/skills settings action — gates first on the manage
-  // permission (org_owner/org_admin/platform_admin, fail-closed).
-  async function saveSkillsSettings(formData: FormData): Promise<void> {
-    await requireManage();
-    const readFormText = (field: string) => (formData.get(field) as string | null) ?? undefined;
-    // Unchecked HTML checkboxes submit NOTHING, so a missing key for a boolean
-    // toggle is an explicit "off" (fail-closed for the network/audit gates),
-    // not "leave unchanged".
-    const readFormBoolean = (field: string) => {
-      const value = formData.get(field);
-      return value === "on" || value === "true";
-    };
-
-    const parsed = openAISkillsSettingsSchema.parse({
-      enabled: readFormBoolean("enabled"),
-      runnerLabel: readFormText("runnerLabel"),
-      containerImage: readFormText("containerImage"),
-      containerWorkspacePath: readFormText("containerWorkspacePath"),
-      containerCpuLimit: readFormText("containerCpuLimit"),
-      containerMemoryLimit: readFormText("containerMemoryLimit"),
-      containerPidsLimit: readFormText("containerPidsLimit"),
-      allowNetwork: readFormBoolean("allowNetwork"),
-      auditLogsEnabled: readFormBoolean("auditLogsEnabled"),
-      readRoots: readFormText("readRoots"),
-      writeRoots: readFormText("writeRoots"),
-      allowedCommandPrefixes: readFormText("allowedCommandPrefixes"),
-      blockedCommandPrefixes: readFormText("blockedCommandPrefixes"),
-      allowedHosts: readFormText("allowedHosts"),
-      maxExecutionSeconds: readFormText("maxExecutionSeconds"),
-      maxOutputKilobytes: readFormText("maxOutputKilobytes"),
-      maxFileWriteKilobytes: readFormText("maxFileWriteKilobytes"),
-    });
-    await saveOpenAIShellSettings(parsed);
-    redirect("/configuration/llm");
-  }
-
-  return { saveConnection, clearConnection, saveSkillsSettings };
+  return { saveConnection, clearConnection };
 }

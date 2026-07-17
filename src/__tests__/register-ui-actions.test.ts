@@ -16,43 +16,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import pkg from "../../package.json" with { type: "json" };
 
-// The skills write handler calls saveOpenAIShellSettings, and the READ handlers
-// call the index model-list / connection helpers + readOpenAIShellSettings. Mock
-// the barrel so the unit test never touches real host deps / the network.
+// The READ handlers call the index model-list / connection helpers. Mock the
+// barrel so the unit test never touches real host deps / the network.
 const {
   listAvailableOpenAIModelsMock,
   filterSelectableOpenAIModelsMock,
   getConfiguredOpenAIConnectionMock,
   isOpenAIConnectionReadyMock,
-  readOpenAIShellSettingsMock,
-  saveOpenAIShellSettingsMock,
   getDefaultOpenAIServiceTierMock,
 } = vi.hoisted(() => ({
   listAvailableOpenAIModelsMock: vi.fn(async () => ["gpt-5.5", "gpt-5.4-mini", "gpt-5.6"]),
   filterSelectableOpenAIModelsMock: vi.fn((models: string[]) => models.filter((m) => !/mini|nano/i.test(m))),
   getConfiguredOpenAIConnectionMock: vi.fn(async () => ({ apiKey: "sk-x", lastValidatedAt: "2026-06-30T00:00:00.000Z" })),
   isOpenAIConnectionReadyMock: vi.fn(() => true),
-  readOpenAIShellSettingsMock: vi.fn(() => ({
-    enabled: true,
-    runnerLabel: "sandboxed-shell",
-    executorMode: "container" as const,
-    containerImage: "cinatra/skill-shell:latest",
-    containerWorkspacePath: "/workspace",
-    containerCpuLimit: "1",
-    containerMemoryLimit: "512m",
-    containerPidsLimit: 128,
-    readRoots: ["/workspace"] as string[],
-    writeRoots: ["/workspace/tmp"] as string[],
-    allowedCommandPrefixes: ["ls", "cat"] as string[],
-    blockedCommandPrefixes: ["rm"] as string[],
-    allowNetwork: false,
-    allowedHosts: [] as string[],
-    maxExecutionSeconds: 30,
-    maxOutputKilobytes: 256,
-    maxFileWriteKilobytes: 256,
-    auditLogsEnabled: true,
-  })),
-  saveOpenAIShellSettingsMock: vi.fn(async (_input: unknown) => {}),
   getDefaultOpenAIServiceTierMock: vi.fn(() => "default"),
 }));
 
@@ -61,8 +37,6 @@ vi.mock("../index", () => ({
   filterSelectableOpenAIModels: filterSelectableOpenAIModelsMock,
   getConfiguredOpenAIConnection: getConfiguredOpenAIConnectionMock,
   isOpenAIConnectionReady: isOpenAIConnectionReadyMock,
-  readOpenAIShellSettings: readOpenAIShellSettingsMock,
-  saveOpenAIShellSettings: saveOpenAIShellSettingsMock,
   getDefaultOpenAIServiceTier: getDefaultOpenAIServiceTierMock,
 }));
 
@@ -95,7 +69,6 @@ function makeHarness(over?: {
   requireManage?: () => Promise<void>;
   saveConnection?: (fd: FormData) => Promise<void>;
   clearConnection?: () => Promise<void>;
-  saveSkillsSettings?: (fd: FormData) => Promise<void>;
 }) {
   const uiActions: UiAction[] = [];
   const ctx = {
@@ -113,7 +86,6 @@ function makeHarness(over?: {
     // so `.mock.calls[0][0]` is well-typed under strict tsc.
     saveConnection: over?.saveConnection ?? vi.fn(async (_fd: FormData) => { throw nextRedirect("/configuration/llm"); }),
     clearConnection: over?.clearConnection ?? vi.fn(async () => { throw nextRedirect("/configuration/llm/initial-setup"); }),
-    saveSkillsSettings: over?.saveSkillsSettings ?? vi.fn(async (_fd: FormData) => { throw nextRedirect("/configuration/llm"); }),
   };
   registerOpenAIUiActions(ctx, { requireManage, actions });
   const get = (id: string) => uiActions.find((a) => a.id === id)!;
@@ -128,7 +100,7 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
   it("registers exactly the connector's declared action ids", () => {
     const { uiActions } = makeHarness();
     expect(uiActions.map((a) => a.id).sort()).toEqual(
-      ["clearConnection", "connectionStatus", "currentConfig", "listModels", "saveConnection", "saveSkillsSettings"].sort(),
+      ["clearConnection", "connectionStatus", "currentConfig", "listModels", "saveConnection"].sort(),
     );
   });
 
@@ -143,7 +115,6 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
   it("registration does NOT eagerly call the host (probe-safe)", () => {
     makeHarness();
     expect(listAvailableOpenAIModelsMock).not.toHaveBeenCalled();
-    expect(readOpenAIShellSettingsMock).not.toHaveBeenCalled();
     expect(readOpenAIConnectionMock).not.toHaveBeenCalled();
   });
 
@@ -188,7 +159,6 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
     const { get } = makeHarness({ requireManage });
     await expect(get("currentConfig").handler({})).rejects.toThrow(/manage tier required/);
     expect(readOpenAIConnectionMock).not.toHaveBeenCalled();
-    expect(readOpenAIShellSettingsMock).not.toHaveBeenCalled();
   });
 
   it("currentConfig manage-gates, returns persisted values, and NEVER returns the apiKey (write-only secret)", async () => {
@@ -203,12 +173,6 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
     expect(out.projectId).toBe("proj_1");
     expect(out.serviceTier).toBe("flex");
     expect(out.defaultModel).toBe("gpt-5.6");
-    // Booleans as "true"/"false"; numbers as strings; free-lists as JSON string[].
-    expect(out.enabled).toBe("true");
-    expect(out.allowNetwork).toBe("false");
-    expect(out.containerPidsLimit).toBe("128");
-    expect(JSON.parse(out.readRoots)).toEqual(["/workspace"]);
-    expect(JSON.parse(out.allowedCommandPrefixes)).toEqual(["ls", "cat"]);
   });
 
   it("saveConnection: forwards a non-empty apiKey, translates the success redirect to {banner:'saved'}", async () => {
@@ -277,115 +241,12 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
     expect(await get("clearConnection").handler({})).toEqual({ banner: "cleared" });
   });
 
-  it("saveSkillsSettings: parses renderer shapes (boolean strings, number strings, free-list JSON) into typed values", async () => {
-    const { get } = makeHarness();
-    const result = await get("saveSkillsSettings").handler({
-      enabled: "false",
-      allowNetwork: "true",
-      auditLogsEnabled: "true",
-      runnerLabel: "runner-x",
-      containerPidsLimit: "256",
-      maxExecutionSeconds: "45",
-      readRoots: JSON.stringify(["/a", "/b"]),
-      allowedHosts: JSON.stringify(["api.example.com"]),
-    });
-    expect(result).toEqual({ banner: "saved" });
-    const input = saveOpenAIShellSettingsMock.mock.calls[0][0] as Record<string, unknown>;
-    expect(input.enabled).toBe(false);
-    expect(input.allowNetwork).toBe(true);
-    expect(input.runnerLabel).toBe("runner-x");
-    expect(input.containerPidsLimit).toBe(256);
-    expect(input.maxExecutionSeconds).toBe(45);
-    // free-list JSON string -> array (NOT a single literal JSON string).
-    expect(input.readRoots).toEqual(["/a", "/b"]);
-    expect(input.allowedHosts).toEqual(["api.example.com"]);
-  });
-
-  it("saveSkillsSettings: an ABSENT field is passed as undefined (keep current)", async () => {
-    const { get } = makeHarness();
-    await get("saveSkillsSettings").handler({ enabled: "false" });
-    const input = saveOpenAIShellSettingsMock.mock.calls[0][0] as Record<string, unknown>;
-    // absent => undefined (the store keeps the current value).
-    expect(input.runnerLabel).toBeUndefined();
-    expect(input.allowedHosts).toBeUndefined();
-  });
-
-  it("NO-LOSS saveSkillsSettings: a DECLARED-DEFAULT submit (un-prepopulated form) keeps persisted, DOES NOT reset policy", async () => {
-    // Persisted (from the mock): allowNetwork false, containerPidsLimit 128,
-    // allowedCommandPrefixes ["ls","cat"], readRoots ["/workspace"]. Change the
-    // mock so the persisted policy DIFFERS from the declared defaults, then submit
-    // declared defaults + empty lists (an un-prepopulated form) — everything must
-    // be kept (undefined → the store retains the current value).
-    readOpenAIShellSettingsMock.mockReturnValueOnce({
-      enabled: true,
-      runnerLabel: "custom-runner",
-      executorMode: "container" as const,
-      containerImage: "acme/shell:pinned",
-      containerWorkspacePath: "/ws",
-      containerCpuLimit: "2",
-      containerMemoryLimit: "1g",
-      containerPidsLimit: 512, // != declared 128
-      readRoots: ["/data", "/mnt"],
-      writeRoots: ["/data/tmp"],
-      allowedCommandPrefixes: ["ls", "cat", "rg"],
-      blockedCommandPrefixes: ["rm", "curl"],
-      allowNetwork: true, // != declared false
-      allowedHosts: ["api.openai.com"], // non-empty
-      maxExecutionSeconds: 90, // != declared 30
-      maxOutputKilobytes: 1024,
-      maxFileWriteKilobytes: 1024,
-      auditLogsEnabled: true,
-    });
-    const { get } = makeHarness();
-    await get("saveSkillsSettings").handler({
-      enabled: "true", // == declared default true, persisted true → keep (undefined)
-      allowNetwork: "false", // == declared default false, persisted TRUE → keep persisted
-      auditLogsEnabled: "true",
-      runnerLabel: "", // empty → keep
-      containerPidsLimit: "128", // == declared default, persisted 512 → keep
-      maxExecutionSeconds: "30", // == declared default, persisted 90 → keep
-      readRoots: JSON.stringify([]), // empty while persisted non-empty → keep
-      allowedCommandPrefixes: JSON.stringify([]), // empty while persisted non-empty → keep
-      allowedHosts: JSON.stringify([]), // empty while persisted non-empty → keep
-    });
-    const input = saveOpenAIShellSettingsMock.mock.calls[0][0] as Record<string, unknown>;
-    // Every ambiguous (declared-default / empty) submission is kept → undefined
-    // → the store retains the persisted security policy. NOTHING is reset.
-    expect(input.allowNetwork).toBeUndefined();
-    expect(input.containerPidsLimit).toBeUndefined();
-    expect(input.maxExecutionSeconds).toBeUndefined();
-    expect(input.runnerLabel).toBeUndefined();
-    expect(input.readRoots).toBeUndefined();
-    expect(input.allowedCommandPrefixes).toBeUndefined();
-    expect(input.allowedHosts).toBeUndefined();
-  });
-
-  it("NO-LOSS saveSkillsSettings: a value DIFFERING from the declared default / a NON-EMPTY list edit IS applied", async () => {
-    const { get } = makeHarness();
-    await get("saveSkillsSettings").handler({
-      allowNetwork: "true", // differs from declared default false → applied
-      containerPidsLimit: "256", // differs from 128 → applied
-      allowedHosts: JSON.stringify(["api.openai.com"]), // non-empty edit → applied
-    });
-    const input = saveOpenAIShellSettingsMock.mock.calls[0][0] as Record<string, unknown>;
-    expect(input.allowNetwork).toBe(true);
-    expect(input.containerPidsLimit).toBe(256);
-    expect(input.allowedHosts).toEqual(["api.openai.com"]);
-  });
-
   it("redirect classification: an EMPTY ?error= is treated as an ERROR (not success), with a generic fallback", async () => {
     const saveConnection = vi.fn(async (_fd: FormData) => { throw nextRedirect("/configuration/llm?modal=openai&error="); });
     const { get } = makeHarness({ saveConnection });
     const result = (await get("saveConnection").handler({ apiKey: "sk-x" })) as { banner: string; error?: string };
     expect(result.banner).toBe("error");
     expect(result.error).toBeTruthy(); // generic fallback, never a false "saved"
-  });
-
-  it("saveSkillsSettings: manage-gate rejection FAILS CLOSED (no write)", async () => {
-    const requireManage = vi.fn(async () => { throw new Error("forbidden"); });
-    const { get } = makeHarness({ requireManage });
-    await expect(get("saveSkillsSettings").handler({ enabled: "true" })).rejects.toThrow("forbidden");
-    expect(saveOpenAIShellSettingsMock).not.toHaveBeenCalled();
   });
 
   it("every WRITE handler manage-gates BEFORE calling the reused action body", async () => {

@@ -1,29 +1,14 @@
 // `register(ctx)` llm-provider-surface shape — the Stage 2 adapter members
-// (cinatra#151): `writeLogFile` + the GATED `shellTools` member.
-//
-// The security-relevant pin: the shell executor member must NEVER forward a
-// caller-supplied administration/settings override into
-// `runOpenAIShellCommandInDocker` — the STORED settings are the single policy
-// authority (enabled flag, command allowlists, mount roots, limits). A host
-// compromise of the capability ABI must not be able to smuggle a permissive
-// settings object past the connector-side gate.
+// (cinatra#151): `writeLogFile` on the provider surface. The in-process shell
+// executor surface (`shellTools`) was retired with the exec-plane cutover (epic
+// cinatra#1705 S5); the connector no longer registers it.
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // vi.hoisted: the vi.mock factory below is hoisted above plain consts.
-const { writeOpenAILogFileMock, readOpenAIShellSettingsMock, runOpenAIShellCommandInDockerMock } =
-  vi.hoisted(() => ({
-    writeOpenAILogFileMock: vi.fn(async (_input: unknown) => {}),
-    readOpenAIShellSettingsMock: vi.fn(() => ({ enabled: true, maxOutputKilobytes: 64 })),
-    runOpenAIShellCommandInDockerMock: vi.fn(async (_input: unknown) => ({
-      command: "echo ok",
-      args: ["-lc", "echo ok"],
-      exitCode: 0,
-      stdout: "ok",
-      stderr: "",
-      timedOut: false,
-    })),
-  }));
+const { writeOpenAILogFileMock } = vi.hoisted(() => ({
+  writeOpenAILogFileMock: vi.fn(async (_input: unknown) => {}),
+}));
 
 vi.mock("../index", () => ({
   isOpenAIConnectionReady: vi.fn(() => true),
@@ -35,8 +20,6 @@ vi.mock("../index", () => ({
   getOpenAILoggingSettings: vi.fn(() => ({ enabled: true, directory: "/logs" })),
   saveOpenAILoggingSettings: vi.fn(async () => {}),
   writeOpenAILogFile: writeOpenAILogFileMock,
-  readOpenAIShellSettings: readOpenAIShellSettingsMock,
-  runOpenAIShellCommandInDocker: runOpenAIShellCommandInDockerMock,
 }));
 
 vi.mock("../log-directory", () => ({ OPENAI_API_LOG_DIRECTORY: "/logs/openai" }));
@@ -45,7 +28,6 @@ vi.mock("../actions-core", () => ({
   makeOpenAIConnectionActions: vi.fn(() => ({
     saveConnection: vi.fn(),
     clearConnection: vi.fn(),
-    saveSkillsSettings: vi.fn(),
   })),
 }));
 
@@ -91,41 +73,6 @@ describe("register(ctx) — Stage 2 llm-provider-surface members", () => {
       kind: "request",
       body: { a: 1 },
     });
-  });
-
-  it("registers the gated shellTools member (settings reader + docker executor only)", async () => {
-    const { impl } = activate();
-    const shellTools = impl.shellTools as {
-      readSettings: () => unknown;
-      runCommandInDocker: (input: unknown) => Promise<unknown>;
-    };
-    expect(Object.keys(shellTools).sort()).toEqual(["readSettings", "runCommandInDocker"]);
-    expect(shellTools.readSettings()).toEqual({ enabled: true, maxOutputKilobytes: 64 });
-    expect(readOpenAIShellSettingsMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("NEVER forwards a caller-supplied administration override to the executor", async () => {
-    const { impl } = activate();
-    const shellTools = impl.shellTools as {
-      runCommandInDocker: (input: unknown) => Promise<unknown>;
-    };
-    await shellTools.runCommandInDocker({
-      shellCommand: "echo ok",
-      cwd: "/tmp",
-      timeoutMs: 1000,
-      maxOutputLength: 2048,
-      // A hostile/buggy caller attempting to override the stored policy:
-      administration: { enabled: true, allowedCommandPrefixes: [""], readRoots: ["/"] },
-    });
-    expect(runOpenAIShellCommandInDockerMock).toHaveBeenCalledTimes(1);
-    const forwarded = runOpenAIShellCommandInDockerMock.mock.calls[0][0] as Record<string, unknown>;
-    expect(forwarded).toEqual({
-      shellCommand: "echo ok",
-      cwd: "/tmp",
-      timeoutMs: 1000,
-      maxOutputLength: 2048,
-    });
-    expect("administration" in forwarded).toBe(false);
   });
 });
 

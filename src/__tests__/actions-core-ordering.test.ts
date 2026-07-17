@@ -14,7 +14,6 @@ const idx = vi.hoisted(() => ({
   getConfiguredOpenAIConnection: vi.fn(async () => ({ apiKey: "sk-live", defaultModel: "gpt-5.5" })),
   getDefaultOpenAIServiceTier: vi.fn(() => "default"),
   clearOpenAIConnectionFromNango: vi.fn(async () => {}),
-  saveOpenAIShellSettings: vi.fn(async () => {}),
 }));
 
 vi.mock("../index", () => idx);

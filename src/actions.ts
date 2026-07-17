@@ -24,7 +24,3 @@ export async function saveOpenAIConnectionAction(formData: FormData) {
 export async function clearOpenAIConnectionAction() {
   return actions.clearConnection();
 }
-
-export async function saveOpenAISkillsSettingsAction(formData: FormData) {
-  return actions.saveSkillsSettings(formData);
-}

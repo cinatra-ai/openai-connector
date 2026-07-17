@@ -1,6 +1,6 @@
 // schema-config named actions for the OpenAI connector.
 //
-// The OpenAI connector's setup/settings surface is declared as DATA in
+// The OpenAI connector's setup surface is declared as DATA in
 // `package.json` `cinatra.configSchema` (uiSurface:"schema-config") — the host
 // renders it from its single `sdk-ui` instance via `<SchemaConfigConnectorForm>`
 // with NO connector React. The declared fields reference these host-registered
@@ -9,11 +9,10 @@
 // the actor "use"-tier BEFORE the handler runs.
 //
 // SECURITY: the host endpoint only enforces "use"-tier. The OpenAI setup surface
-// is admin-only and reads/writes the connection credential resolution + the
-// sandboxed-shell SECURITY policy (command allow/block lists, mount roots,
-// egress hosts, resource limits). So EVERY action here re-asserts the "manage"
-// gate FIRST (org_owner/org_admin/platform_admin, fail-closed) via the injected
-// `requireManage` — defense in depth over the host's use-tier dispatch gate.
+// is admin-only and reads/writes the connection credential resolution. So EVERY
+// action here re-asserts the "manage" gate FIRST (org_owner/org_admin/
+// platform_admin, fail-closed) via the injected `requireManage` — defense in
+// depth over the host's use-tier dispatch gate.
 //   - READ  (currentConfig, listModels): manage-gated — they disclose admin
 //            config / use the saved key.
 //   - PROBE (connectionStatus): manage-gated — same admin-only surface. Doubles
@@ -21,19 +20,15 @@
 //   - WRITE (saveConnection, clearConnection): manage-gated here AND the reused
 //            `actions-core` body gates again as its FIRST statement (the host
 //            test pins that) — double-gated on the connection path.
-//   - WRITE (saveSkillsSettings): manage-gated HERE only (this path does not go
-//            through `actions-core`; it calls `saveOpenAIShellSettings` directly).
 //
 // This module ships NO server actions and NO React; it is JSON-in/JSON-out. The
 // two connection writes REUSE the exact `actions-core` bodies (validation +
 // model-list + Nango + notification) via a JSON→FormData adapter, translating
 // their `redirect()` (a NEXT_REDIRECT throw) into a `{ banner }` result so the
-// schema-config form's banner field can render it. The skills write calls
-// `saveOpenAIShellSettings` directly with PARSED arrays (the renderer submits a
-// free-list as a JSON `string[]` string) so there is no lossy newline
-// round-trip. Both write paths apply NO-LOSS merge semantics against the
-// PERSISTED baseline (see DECLARED_DEFAULTS) so a save-unchanged from an
-// un-prepopulated form cannot clobber stored config (idempotent save).
+// schema-config form's banner field can render it. The write path applies
+// NO-LOSS merge semantics against the PERSISTED baseline (see DECLARED_DEFAULTS)
+// so a save-unchanged from an un-prepopulated form cannot clobber stored config
+// (idempotent save).
 
 import type { ExtensionHostContext } from "@cinatra-ai/sdk-extensions";
 import {
@@ -42,8 +37,6 @@ import {
   getDefaultOpenAIServiceTier,
   isOpenAIConnectionReady,
   listAvailableOpenAIModels,
-  readOpenAIShellSettings,
-  saveOpenAIShellSettings,
 } from "./index";
 import { getOpenAIDeps } from "./deps";
 import type { OpenAIManageGuard } from "./actions-core";
@@ -54,7 +47,6 @@ import type { OpenAIManageGuard } from "./actions-core";
 export type OpenAIConnectionActions = {
   saveConnection(formData: FormData): Promise<void>;
   clearConnection(): Promise<void>;
-  saveSkillsSettings(formData: FormData): Promise<void>;
 };
 
 /** A banner-shaped result the schema-config `banner` field renders. */
@@ -101,17 +93,16 @@ function errorMessageFromLocation(location: string): string | null {
 // The connector therefore applies CONSERVATIVE AMBIGUITY HANDLING against the
 // PERSISTED baseline — a submitted value is treated as "keep persisted" whenever
 // it is indistinguishable from the un-prepopulated default:
-//   - absent field                                   → keep persisted
-//   - empty text/secret                              → keep persisted
-//   - boolean/number/select == the DECLARED DEFAULT  → keep persisted (when the
-//                                                       persisted value differs)
-//   - free-list == [] while the persisted list is non-empty → keep persisted
+//   - absent field                    → keep persisted
+//   - empty text/secret               → keep persisted
+//   - select == the DECLARED DEFAULT  → keep persisted (when the persisted
+//                                        value differs)
 //   - any value that DIFFERS from the declared default/blank → the user's
-//                                                       explicit intent → apply
+//                                        explicit intent → apply
 // This is no-loss safe with OR without the host `initialValues` thread. Its only
-// cost: "reset to default" and "clear a non-empty list" are not expressible from
-// schema-config until the host threads initialValues (the follow-up) — an
-// acceptable, documented trade for the central LLM piece.
+// cost: "reset to default" is not expressible from schema-config until the host
+// threads initialValues (the follow-up) — an acceptable, documented trade for
+// the central LLM piece.
 
 /** The schema-declared defaults (mirror package.json cinatra.configSchema). A
  *  submitted value equal to its declared default is ambiguous with an
@@ -119,13 +110,6 @@ function errorMessageFromLocation(location: string): string | null {
 const DECLARED_DEFAULTS = {
   serviceTier: "default",
   defaultModel: "gpt-5.5",
-  enabled: true,
-  allowNetwork: false,
-  auditLogsEnabled: true,
-  containerPidsLimit: 128,
-  maxExecutionSeconds: 30,
-  maxOutputKilobytes: 256,
-  maxFileWriteKilobytes: 256,
 } as const;
 
 /** Read a string field from a JSON input object (fail-soft). */
@@ -135,81 +119,6 @@ function str(input: unknown, key: string): string | undefined {
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return undefined;
-}
-
-/**
- * Parse a free-list field value. The `free-list` renderer serializes non-empty
- * entries as a single JSON `string[]` string (e.g. `'["/a","/b"]'`). Accept an
- * already-array value too (defensive). Returns `undefined` when the key is
- * ABSENT (keep persisted). An empty/blank submission returns `[]` here; the
- * caller applies the no-loss rule (an empty submission while the persisted list
- * is non-empty is treated as keep-persisted, since it is indistinguishable from
- * an un-prepopulated render).
- */
-function parseFreeList(input: unknown, key: string): string[] | undefined {
-  if (!input || typeof input !== "object" || !(key in (input as object))) return undefined;
-  const v = (input as Record<string, unknown>)[key];
-  if (Array.isArray(v)) return v.filter((s): s is string => typeof s === "string");
-  if (typeof v === "string") {
-    const trimmed = v.trim();
-    if (trimmed === "") return [];
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) return parsed.filter((s): s is string => typeof s === "string");
-    } catch {
-      // Not JSON — treat the raw string as a single entry (never split on "\n"
-      // here; the free-list renderer never emits a newline-joined string).
-      return [trimmed];
-    }
-  }
-  return [];
-}
-
-/** Parse a boolean field the renderer serialized as `"true"`/`"false"`. Returns
- *  undefined when absent. */
-function parseBoolean(input: unknown, key: string): boolean | undefined {
-  const s = str(input, key);
-  if (s === undefined) return undefined;
-  return s === "true" || s === "on";
-}
-
-/** Parse a numeric field the renderer serialized as a raw string. Returns
- *  undefined when absent or non-numeric (the store clamps + falls back). */
-function parseNumber(input: unknown, key: string): number | undefined {
-  const s = str(input, key);
-  if (s === undefined || s.trim() === "") return undefined;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-/**
- * No-loss merge for a boolean: forward the submitted value UNLESS it equals the
- * declared default while the persisted value differs (ambiguous with an
- * un-prepopulated render → keep persisted). Returns undefined to mean "keep
- * current" (the store falls back to the persisted/default value).
- */
-function mergeBoolean(input: unknown, key: keyof typeof DECLARED_DEFAULTS, persisted: boolean | undefined): boolean | undefined {
-  const submitted = parseBoolean(input, key);
-  if (submitted === undefined) return undefined;
-  if (submitted === DECLARED_DEFAULTS[key] && persisted !== undefined && persisted !== submitted) return undefined;
-  return submitted;
-}
-
-/** No-loss merge for a number (same rule as mergeBoolean). */
-function mergeNumber(input: unknown, key: keyof typeof DECLARED_DEFAULTS, persisted: number | undefined): number | undefined {
-  const submitted = parseNumber(input, key);
-  if (submitted === undefined) return undefined;
-  if (submitted === DECLARED_DEFAULTS[key] && persisted !== undefined && persisted !== submitted) return undefined;
-  return submitted;
-}
-
-/** No-loss merge for a free-list: an empty submission while the persisted list
- *  is non-empty is ambiguous with an un-prepopulated render → keep persisted. */
-function mergeFreeList(input: unknown, key: string, persisted: string[] | undefined): string[] | undefined {
-  const submitted = parseFreeList(input, key);
-  if (submitted === undefined) return undefined;
-  if (submitted.length === 0 && persisted !== undefined && persisted.length > 0) return undefined;
-  return submitted;
 }
 
 /**
@@ -344,41 +253,19 @@ export function registerOpenAIUiActions(
   //      root `hydrateAction`, so the host invokes it SERVER-SIDE while
   //      rendering the setup page and threads the sanitized NON-SECRET result
   //      into the form (side-effect-free idempotent read). Manage-gated: it
-  //      round-trips the admin-only shell SECURITY policy. NEVER returns the
+  //      round-trips the admin-only connection config. NEVER returns the
   //      apiKey (write-only secret) — the secret field always renders empty.
   ctx.ui.registerAction({
     id: "currentConfig",
     handler: async (): Promise<Record<string, string>> => {
       await requireManage();
       const connection = getOpenAIDeps().readOpenAIConnection();
-      const shell = readOpenAIShellSettings();
       const out: Record<string, string> = {};
       // Connection (apiKey deliberately omitted — write-only).
       if (connection?.projectId) out.projectId = connection.projectId;
       if (connection?.organizationId) out.organizationId = connection.organizationId;
       out.serviceTier = connection?.serviceTier ?? getDefaultOpenAIServiceTier();
       if (connection?.defaultModel) out.defaultModel = connection.defaultModel;
-      // Shell booleans as "true"/"false".
-      out.enabled = shell.enabled ? "true" : "false";
-      out.allowNetwork = shell.allowNetwork ? "true" : "false";
-      out.auditLogsEnabled = shell.auditLogsEnabled ? "true" : "false";
-      // Shell text.
-      out.runnerLabel = shell.runnerLabel;
-      out.containerImage = shell.containerImage;
-      out.containerWorkspacePath = shell.containerWorkspacePath;
-      out.containerCpuLimit = shell.containerCpuLimit;
-      out.containerMemoryLimit = shell.containerMemoryLimit;
-      // Shell numbers as strings.
-      out.containerPidsLimit = String(shell.containerPidsLimit);
-      out.maxExecutionSeconds = String(shell.maxExecutionSeconds);
-      out.maxOutputKilobytes = String(shell.maxOutputKilobytes);
-      out.maxFileWriteKilobytes = String(shell.maxFileWriteKilobytes);
-      // Shell free-lists as JSON string[] strings (the FreeListRow parses these).
-      out.readRoots = JSON.stringify(shell.readRoots);
-      out.writeRoots = JSON.stringify(shell.writeRoots);
-      out.allowedCommandPrefixes = JSON.stringify(shell.allowedCommandPrefixes);
-      out.blockedCommandPrefixes = JSON.stringify(shell.blockedCommandPrefixes);
-      out.allowedHosts = JSON.stringify(shell.allowedHosts);
       return out;
     },
   });
@@ -411,57 +298,6 @@ export function registerOpenAIUiActions(
     handler: async (): Promise<BannerResult> => {
       await requireManage();
       return runWrite(() => actions.clearConnection(), "cleared");
-    },
-  });
-
-  // ---- WRITE: save the sandboxed-shell SECURITY policy. Manage-gated. Calls
-  //      `saveOpenAIShellSettings` DIRECTLY with parsed values (the free-list
-  //      renderer submits a JSON string[] string; a lossy newline round-trip
-  //      through actions-core is avoided).
-  //
-  //      NO-LOSS: because the host does not yet thread `initialValues`, an
-  //      un-prepopulated form submits every field at its DECLARED DEFAULT. Each
-  //      value is merged against the PERSISTED policy — a submission equal to the
-  //      declared default (or an empty text/list) while the persisted value
-  //      differs is treated as "keep persisted" (undefined → the store keeps the
-  //      current value). This prevents a save-unchanged from silently RESETTING
-  //      the admin's shell security policy (booleans, limits, roots, command
-  //      allow/block lists, egress hosts) to defaults.
-  ctx.ui.registerAction({
-    id: "saveSkillsSettings",
-    handler: async (input: unknown): Promise<BannerResult> => {
-      await requireManage();
-      try {
-        const current = readOpenAIShellSettings();
-        // Text: empty submission keeps the persisted value (undefined → keep).
-        const mergeText = (key: string): string | undefined => {
-          const v = str(input, key)?.trim();
-          return v && v.length > 0 ? v : undefined;
-        };
-        await saveOpenAIShellSettings({
-          enabled: mergeBoolean(input, "enabled", current.enabled),
-          allowNetwork: mergeBoolean(input, "allowNetwork", current.allowNetwork),
-          auditLogsEnabled: mergeBoolean(input, "auditLogsEnabled", current.auditLogsEnabled),
-          runnerLabel: mergeText("runnerLabel"),
-          containerImage: mergeText("containerImage"),
-          containerWorkspacePath: mergeText("containerWorkspacePath"),
-          containerCpuLimit: mergeText("containerCpuLimit"),
-          containerMemoryLimit: mergeText("containerMemoryLimit"),
-          containerPidsLimit: mergeNumber(input, "containerPidsLimit", current.containerPidsLimit),
-          maxExecutionSeconds: mergeNumber(input, "maxExecutionSeconds", current.maxExecutionSeconds),
-          maxOutputKilobytes: mergeNumber(input, "maxOutputKilobytes", current.maxOutputKilobytes),
-          maxFileWriteKilobytes: mergeNumber(input, "maxFileWriteKilobytes", current.maxFileWriteKilobytes),
-          readRoots: mergeFreeList(input, "readRoots", current.readRoots),
-          writeRoots: mergeFreeList(input, "writeRoots", current.writeRoots),
-          allowedCommandPrefixes: mergeFreeList(input, "allowedCommandPrefixes", current.allowedCommandPrefixes),
-          blockedCommandPrefixes: mergeFreeList(input, "blockedCommandPrefixes", current.blockedCommandPrefixes),
-          allowedHosts: mergeFreeList(input, "allowedHosts", current.allowedHosts),
-        });
-        return { banner: "saved" };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unable to save the OpenAI skills settings.";
-        return { banner: "error", error: message };
-      }
     },
   });
 }

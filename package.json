@@ -1,6 +1,6 @@
 {
   "name": "@cinatra-ai/openai-connector",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "license": "Apache-2.0",
   "type": "module",
   "files": [
@@ -21,10 +21,6 @@
   "scripts": {
     "test": "vitest",
     "lint": "eslint . --no-inline-config"
-  },
-  "dependencies": {
-    "@openai/agents": "^0.11.4",
-    "openai": "^6.38.0"
   },
   "peerDependencies": {
     "@cinatra-ai/sdk-extensions": "*",
@@ -63,7 +59,7 @@
     "configSchema": {
       "title": "OpenAI",
       "hydrateAction": "currentConfig",
-      "description": "Connect OpenAI through Nango for Cinatra's model-backed workflows, and configure the sandboxed shell-skill executor policy. Only workspace admins can change these settings.",
+      "description": "Connect OpenAI through Nango for Cinatra's model-backed workflows. Only workspace admins can change these settings.",
       "fields": [
         {
           "kind": "banner",
@@ -154,151 +150,6 @@
       ],
       "tabs": [
         {
-          "id": "shell",
-          "label": "Local shell",
-          "fields": [
-            {
-              "kind": "banner",
-              "label": "Result",
-              "variants": [
-                {
-                  "name": "saved",
-                  "tone": "success",
-                  "message": "OpenAI settings saved."
-                },
-                {
-                  "name": "cleared",
-                  "tone": "warning",
-                  "message": "The saved OpenAI API key was removed."
-                },
-                {
-                  "name": "error",
-                  "tone": "destructive",
-                  "message": "Something went wrong saving the OpenAI settings."
-                }
-              ]
-            },
-            {
-              "kind": "boolean",
-              "key": "enabled",
-              "label": "Enable sandboxed shell architecture",
-              "defaultValue": true,
-              "description": "When enabled, the package can prepare shell tool payloads plus the sandbox policy your production executor should apply."
-            },
-            {
-              "kind": "text",
-              "key": "runnerLabel",
-              "label": "Sandbox runner label"
-            },
-            {
-              "kind": "text",
-              "key": "containerImage",
-              "label": "Container image"
-            },
-            {
-              "kind": "text",
-              "key": "containerWorkspacePath",
-              "label": "Container workspace path"
-            },
-            {
-              "kind": "text",
-              "key": "containerCpuLimit",
-              "label": "Container CPU limit"
-            },
-            {
-              "kind": "text",
-              "key": "containerMemoryLimit",
-              "label": "Container memory limit"
-            },
-            {
-              "kind": "number",
-              "key": "containerPidsLimit",
-              "label": "Container PID limit",
-              "min": 16,
-              "max": 2048,
-              "defaultValue": 128
-            },
-            {
-              "kind": "number",
-              "key": "maxExecutionSeconds",
-              "label": "Max execution seconds",
-              "min": 5,
-              "max": 600,
-              "defaultValue": 30
-            },
-            {
-              "kind": "number",
-              "key": "maxOutputKilobytes",
-              "label": "Max output KB",
-              "min": 16,
-              "max": 4096,
-              "defaultValue": 256
-            },
-            {
-              "kind": "number",
-              "key": "maxFileWriteKilobytes",
-              "label": "Max file write KB",
-              "min": 16,
-              "max": 4096,
-              "defaultValue": 256
-            },
-            {
-              "kind": "boolean",
-              "key": "allowNetwork",
-              "label": "Allow outbound network access",
-              "defaultValue": false,
-              "description": "Default stays off. Only enable this when your executor also enforces the allowed-host rules below."
-            },
-            {
-              "kind": "boolean",
-              "key": "auditLogsEnabled",
-              "label": "Require executor audit logs",
-              "defaultValue": true,
-              "description": "Signals that shell_call and shell_call_output events must be preserved for auditing."
-            },
-            {
-              "kind": "free-list",
-              "key": "readRoots",
-              "label": "Readable roots",
-              "itemLabel": "path",
-              "placeholder": "/workspace"
-            },
-            {
-              "kind": "free-list",
-              "key": "writeRoots",
-              "label": "Writable roots",
-              "itemLabel": "path",
-              "placeholder": "/workspace/tmp"
-            },
-            {
-              "kind": "free-list",
-              "key": "allowedCommandPrefixes",
-              "label": "Allowed command prefixes",
-              "itemLabel": "prefix",
-              "placeholder": "ls"
-            },
-            {
-              "kind": "free-list",
-              "key": "blockedCommandPrefixes",
-              "label": "Blocked command prefixes",
-              "itemLabel": "prefix",
-              "placeholder": "rm"
-            },
-            {
-              "kind": "free-list",
-              "key": "allowedHosts",
-              "label": "Allowed outbound hosts",
-              "itemLabel": "host",
-              "placeholder": "api.example.com"
-            },
-            {
-              "kind": "named-action",
-              "label": "Save skills administration",
-              "actionId": "saveSkillsSettings"
-            }
-          ]
-        },
-        {
           "id": "help",
           "label": "Help",
           "fields": [
@@ -307,8 +158,8 @@
               "label": "OpenAI setup",
               "tone": "info",
               "probeActionId": "connectionStatus",
-              "whenReady": "OpenAI is connected. Use the Setup tab to update your API key, Project ID, Organization ID, service tier, or default model — mini and nano models are excluded from the picker because Cinatra's web scraping and data extraction requires full-size models. Use the Local shell tab to configure the optional sandboxed shell tool for agents that need to run commands in an isolated container: the container image, resource limits (CPU, memory, PID count, execution time, output size), which commands and filesystem paths are allowed, and whether outbound network access is permitted.",
-              "whenNotReady": "Not connected yet. On the Setup tab, paste your OpenAI API key (Project ID and Organization ID are optional scoping), choose a service tier and default model, then click Connect — the key is validated against the OpenAI API before it is stored and is never shown again. Once connected, use the Local shell tab to turn on the sandboxed shell tool for agents that need to run commands in an isolated container.",
+              "whenReady": "OpenAI is connected. Use the Setup tab to update your API key, Project ID, Organization ID, service tier, or default model — mini and nano models are excluded from the picker because Cinatra's web scraping and data extraction requires full-size models.",
+              "whenNotReady": "Not connected yet. On the Setup tab, paste your OpenAI API key (Project ID and Organization ID are optional scoping), choose a service tier and default model, then click Connect — the key is validated against the OpenAI API before it is stored and is never shown again.",
               "description": "Read-only setup guidance — nothing on this tab is saved. Only workspace admins can change these settings."
             }
           ]
