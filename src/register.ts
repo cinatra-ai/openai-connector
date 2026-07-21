@@ -26,7 +26,11 @@
 // imported package modules (index / log-directory / actions-core) carry no
 // SDK value imports.
 
-import type { ExtensionHostContext, NangoSystemSurface } from "@cinatra-ai/sdk-extensions";
+import type {
+  ExtensionHostContext,
+  NangoSystemSurface,
+  LlmProviderAdapterSurface,
+} from "@cinatra-ai/sdk-extensions";
 import {
   isOpenAIConnectionReady,
   getConfiguredOpenAIConnection,
@@ -43,6 +47,11 @@ import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
 import { makeOpenAIConnectionActions } from "./actions-core";
 import { registerOpenAIUiActions } from "./register-ui-actions";
 import { registerOpenAIConnector, type OpenAIConnectorDeps } from "./deps";
+// The relocated OpenAI request-translation adapter (llm-providers S4,
+// cinatra#1715). The host's packages/llm resolves this connector's
+// `createAdapter()` factory through the `llm-provider-adapter` capability
+// instead of its in-core `providers/openai.ts` switch.
+import { createOpenAIProviderAdapter } from "./adapter/openai-adapter";
 
 const PACKAGE_NAME = "@cinatra-ai/openai-connector";
 
@@ -209,6 +218,38 @@ export function register(ctx: ExtensionHostContext): void {
         clearConnection: () => actions.clearConnection(),
       },
     },
+  });
+
+  // ---- llm-provider-adapter surface (llm-providers S4, cinatra#1715) ----
+  //
+  // The full OpenAI request-translation adapter now lives IN this connector
+  // (relocated from the host's packages/llm `providers/openai.ts`). The host's
+  // packages/llm resolves the adapter through this NEW versioned
+  // `llm-provider-adapter` capability instead of its in-core factory switch:
+  // once a trusted surface is registered the host calls `createAdapter()` and
+  // does NOT fall back to the legacy in-core factory (the host fails CLOSED on
+  // an abiVersion it does not recognise). `createAdapter()` resolves the
+  // connector-owned connection internally and returns null when the connector is
+  // present-but-unconfigured — an AUTHORITATIVE "not configured" (the registry's
+  // existing null-adapter semantics; no new error class). Registration does no
+  // host I/O (probe-safe). The capability-id is a string literal because it stays
+  // host-fenced in the SDK (`./internal`), exactly like the S1 surface above.
+  ctx.capabilities.registerProvider("llm-provider-adapter", {
+    packageName: PACKAGE_NAME,
+    impl: {
+      // ABI v1 is inlined as a literal (NOT value-imported from the host-peer
+      // SDK — the host-peer-value-import ban keeps @cinatra-ai/sdk-extensions
+      // TYPE-only over the serverEntry graph). The `satisfies
+      // LlmProviderAdapterSurface` below type-checks this literal against the
+      // leaf's `typeof LLM_PROVIDER_ADAPTER_ABI_VERSION`, so an ABI bump breaks
+      // the build here rather than drifting silently.
+      abiVersion: 1,
+      providerId: "openai",
+      createAdapter: async () => {
+        const connection = await getConfiguredOpenAIConnection();
+        return connection ? createOpenAIProviderAdapter(connection) : null;
+      },
+    } satisfies LlmProviderAdapterSurface,
   });
 
   // ---- schema-config named actions (cinatra#782) ----
