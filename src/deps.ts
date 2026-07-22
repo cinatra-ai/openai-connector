@@ -109,6 +109,15 @@ export interface OpenAIConnectorDeps {
   // misc host singletons
   buildAppMcpSelfClientHeaders: () => Record<string, string>;
   isAppDevelopmentMode: () => boolean;
+  /**
+   * The single host-resolved local-CLI eligibility predicate (cinatra#1926):
+   * `development-mode OR preview-installation`, backed by the host
+   * `localCliEligible` helper via the `@cinatra-ai/host:runtime-mode` service.
+   * The connection-mode write rejection + transport resolution consume THIS
+   * (never an independent re-derivation); binds fail-closed to `false` on a host
+   * that predates the service member (the mode stays hidden/API-only).
+   */
+  localCliEligible: () => boolean;
   createNotification: (input: {
     title: string;
     body: string;

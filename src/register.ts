@@ -76,7 +76,11 @@ type HostOpenAIConnectionShape = {
   updateLoggingEnabled: OpenAIConnectorDeps["updateOpenAILoggingEnabled"];
 };
 type HostMcpSelfClientShape = { buildHeaders(): Record<string, string> };
-type HostRuntimeModeShape = { isDevelopment(): boolean };
+// cinatra#1926: the runtime-mode service ALSO carries the single local-CLI
+// eligibility predicate. `localCliEligible` is OPTIONAL in this structural shape
+// so the binding stays fail-closed against a host that predates it (a missing
+// member ⇒ the local-CLI mode stays hidden / write-rejected / API-only).
+type HostRuntimeModeShape = { isDevelopment(): boolean; localCliEligible?(): boolean };
 type HostNotificationsShape = { create: OpenAIConnectorDeps["createNotification"] };
 
 /** Lazy per-concern host-service resolution (fail-loud on a missing service —
@@ -127,6 +131,9 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
     updateOpenAILoggingEnabled: (loggingEnabled) => connection().updateLoggingEnabled(loggingEnabled),
     buildAppMcpSelfClientHeaders: () => selfClient().buildHeaders(),
     isAppDevelopmentMode: () => runtimeMode().isDevelopment(),
+    // cinatra#1926: consume the host's single localCliEligible predicate. Optional
+    // chaining + `=== true` fail closed (a host without the member ⇒ ineligible).
+    localCliEligible: () => runtimeMode().localCliEligible?.() === true,
     createNotification: (input) => notifications().create(input),
     // Nango connection-storage members delegate to the connector-authored
     // nango-system surface at CALL time (the key maps are getters for the

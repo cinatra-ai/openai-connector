@@ -153,6 +153,36 @@
       ],
       "tabs": [
         {
+          "id": "connection",
+          "label": "Connection",
+          "fields": [
+            {
+              "kind": "banner",
+              "label": "Result",
+              "variants": [
+                { "name": "connectionSaved", "tone": "success", "message": "Connection mode saved." },
+                { "name": "error", "tone": "destructive", "message": "Something went wrong." }
+              ]
+            },
+            {
+              "kind": "select",
+              "key": "connectionMode",
+              "label": "Connect via",
+              "defaultValue": "api",
+              "description": "Choose how Cinatra reaches OpenAI when you mention @openai. API (the default) uses the OpenAI API key configured on the Setup tab.",
+              "options": [
+                { "value": "api", "label": "API" },
+                { "value": "localCli", "label": "Local CLI", "devPreviewOnly": true }
+              ]
+            },
+            {
+              "kind": "named-action",
+              "label": "Save connection mode",
+              "actionId": "saveConnectionMode"
+            }
+          ]
+        },
+        {
           "id": "help",
           "label": "Help",
           "fields": [

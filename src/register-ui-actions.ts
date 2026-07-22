@@ -40,6 +40,15 @@ import {
 } from "./index";
 import { getOpenAIDeps } from "./deps";
 import type { OpenAIManageGuard } from "./actions-core";
+// Connection-mode (API vs local CLI) selector persistence + transport resolution
+// (cinatra#1926). The gated `localCli` option is stripped server-side by the host
+// setup route when ineligible; these handlers add the WRITE-side rejection +
+// hydration, all consuming the same host `localCliEligible` predicate.
+import {
+  decideConnectionModeWrite,
+  getResolvedConnectionTransport,
+  saveConnectionMode,
+} from "./connection-mode";
 
 /** The write actions this connector reuses from `actions-core` (FormData +
  *  redirect). Kept structural so this module never re-implements their
@@ -266,6 +275,11 @@ export function registerOpenAIUiActions(
       if (connection?.organizationId) out.organizationId = connection.organizationId;
       out.serviceTier = connection?.serviceTier ?? getDefaultOpenAIServiceTier();
       if (connection?.defaultModel) out.defaultModel = connection.defaultModel;
+      // Connection mode (cinatra#1926): hydrate the RESOLVED transport, not the
+      // raw persisted value — so an ineligible installation (where the server
+      // stripped the `localCli` option) pre-fills `api`, never a now-absent
+      // option. Eligible + persisted `localCli` pre-fills `localCli`.
+      out.connectionMode = getResolvedConnectionTransport();
       return out;
     },
   });
@@ -298,6 +312,34 @@ export function registerOpenAIUiActions(
     handler: async (): Promise<BannerResult> => {
       await requireManage();
       return runWrite(() => actions.clearConnection(), "cleared");
+    },
+  });
+
+  // ---- Connection tab (cinatra#1926) ----
+  //
+  // WRITE (manage-gated): persist the API-vs-local-CLI connection mode. This is
+  // the Connection tab's OWN save (mirrors saveConnection), so the selector is
+  // self-contained and saveable. SERVER-SIDE enforcement via the pure
+  // `decideConnectionModeWrite` policy: a forged write selecting `localCli` on an
+  // ineligible installation is REJECTED (defense in depth over the option being
+  // stripped from the rendered DOM), consuming the SAME host `localCliEligible`
+  // predicate the setup route uses to strip the option — never a client value.
+  ctx.ui.registerAction({
+    id: "saveConnectionMode",
+    handler: async (input: unknown): Promise<{ banner: string }> => {
+      await requireManage();
+      const fields =
+        input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+      const decision = decideConnectionModeWrite(fields.connectionMode, {
+        localCliEligible: getOpenAIDeps().localCliEligible(),
+      });
+      if (!decision.ok) {
+        return { banner: "error" };
+      }
+      if (decision.persist) {
+        saveConnectionMode(decision.persist);
+      }
+      return { banner: "connectionSaved" };
     },
   });
 }

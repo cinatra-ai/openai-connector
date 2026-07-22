@@ -13,7 +13,7 @@
 // + the redirect->banner translation + the free-list JSON parsing, in isolation
 // from the real index/deps.
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import pkg from "../../package.json" with { type: "json" };
 
 // The READ handlers call the index model-list / connection helpers. Mock the
@@ -40,18 +40,44 @@ vi.mock("../index", () => ({
   getDefaultOpenAIServiceTier: getDefaultOpenAIServiceTierMock,
 }));
 
-const { readOpenAIConnectionMock } = vi.hoisted(() => ({
-  readOpenAIConnectionMock: vi.fn(() => ({
-    projectId: "proj_1",
-    organizationId: "org_1",
-    serviceTier: "flex" as const,
-    defaultModel: "gpt-5.6",
-    apiKey: "sk-secret-should-never-leak",
-  })),
-}));
+// The deps mock also backs the connection-mode read/write (cinatra#1926): an
+// in-memory connector-config store + a togglable `localCliEligible` predicate, so
+// `currentConfig`'s connectionMode hydration and the `saveConnectionMode` handler
+// resolve through the same seam the host binds at runtime.
+const {
+  readOpenAIConnectionMock,
+  readConnectorConfigFromDatabaseMock,
+  writeConnectorConfigToDatabaseMock,
+  localCliEligibleMock,
+  connectionModeStore,
+} = vi.hoisted(() => {
+  const connectionModeStore: Record<string, unknown> = {};
+  return {
+    connectionModeStore,
+    readOpenAIConnectionMock: vi.fn(() => ({
+      projectId: "proj_1",
+      organizationId: "org_1",
+      serviceTier: "flex" as const,
+      defaultModel: "gpt-5.6",
+      apiKey: "sk-secret-should-never-leak",
+    })),
+    readConnectorConfigFromDatabaseMock: vi.fn((key: string, fallback: unknown) =>
+      key in connectionModeStore ? connectionModeStore[key] : fallback,
+    ),
+    writeConnectorConfigToDatabaseMock: vi.fn((key: string, value: unknown) => {
+      connectionModeStore[key] = value;
+    }),
+    localCliEligibleMock: vi.fn(() => false),
+  };
+});
 
 vi.mock("../deps", () => ({
-  getOpenAIDeps: () => ({ readOpenAIConnection: readOpenAIConnectionMock }),
+  getOpenAIDeps: () => ({
+    readOpenAIConnection: readOpenAIConnectionMock,
+    readConnectorConfigFromDatabase: readConnectorConfigFromDatabaseMock,
+    writeConnectorConfigToDatabase: writeConnectorConfigToDatabaseMock,
+    localCliEligible: localCliEligibleMock,
+  }),
 }));
 
 import { registerOpenAIUiActions } from "../register-ui-actions";
@@ -92,6 +118,13 @@ function makeHarness(over?: {
   return { uiActions, requireManage, actions, get };
 }
 
+beforeEach(() => {
+  // Reset the connection-mode store + eligibility between tests (clearAllMocks
+  // keeps a plain object and a mockReturnValue across tests).
+  for (const k of Object.keys(connectionModeStore)) delete connectionModeStore[k];
+  localCliEligibleMock.mockReturnValue(false);
+});
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -100,7 +133,7 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
   it("registers exactly the connector's declared action ids", () => {
     const { uiActions } = makeHarness();
     expect(uiActions.map((a) => a.id).sort()).toEqual(
-      ["clearConnection", "connectionStatus", "currentConfig", "listModels", "saveConnection"].sort(),
+      ["clearConnection", "connectionStatus", "currentConfig", "listModels", "saveConnection", "saveConnectionMode"].sort(),
     );
   });
 
@@ -239,6 +272,59 @@ describe("registerOpenAIUiActions — schema-config named actions", () => {
   it("clearConnection: success redirect -> {banner:'cleared'}", async () => {
     const { get } = makeHarness();
     expect(await get("clearConnection").handler({})).toEqual({ banner: "cleared" });
+  });
+
+  // ---- Connection tab (cinatra#1926) ----
+
+  it("currentConfig hydrates connectionMode to the RESOLVED transport (api default; localCli only when persisted AND eligible; falls back on drop-out — AC4)", async () => {
+    // Default: nothing persisted, ineligible → api.
+    const base = makeHarness();
+    expect(((await base.get("currentConfig").handler({})) as Record<string, string>).connectionMode).toBe("api");
+
+    // Persisted localCli + eligible → localCli.
+    connectionModeStore["openai-connection-mode"] = { mode: "localCli" };
+    localCliEligibleMock.mockReturnValue(true);
+    const eligible = makeHarness();
+    expect(((await eligible.get("currentConfig").handler({})) as Record<string, string>).connectionMode).toBe("localCli");
+
+    // Same persisted localCli but the install dropped out of dev/preview → api.
+    localCliEligibleMock.mockReturnValue(false);
+    const dropped = makeHarness();
+    expect(((await dropped.get("currentConfig").handler({})) as Record<string, string>).connectionMode).toBe("api");
+  });
+
+  it("saveConnectionMode manage-gates, persists a chosen mode (eligible), banner connectionSaved", async () => {
+    localCliEligibleMock.mockReturnValue(true);
+    const requireManage = vi.fn(async () => {});
+    const { get } = makeHarness({ requireManage });
+    const r = await get("saveConnectionMode").handler({ connectionMode: "localCli" });
+    expect(requireManage).toHaveBeenCalledTimes(1);
+    expect(r).toEqual({ banner: "connectionSaved" });
+    expect(connectionModeStore["openai-connection-mode"]).toEqual({ mode: "localCli" });
+  });
+
+  it("saveConnectionMode REJECTS a forged localCli write on an INELIGIBLE install (server-side gate, DOM strip bypassed)", async () => {
+    localCliEligibleMock.mockReturnValue(false);
+    const { get } = makeHarness();
+    const r = await get("saveConnectionMode").handler({ connectionMode: "localCli" });
+    expect(r).toEqual({ banner: "error" });
+    expect(connectionModeStore["openai-connection-mode"]).toBeUndefined();
+  });
+
+  it("saveConnectionMode persists a deliberate localCli → api switch (no no-loss trap — AC4)", async () => {
+    connectionModeStore["openai-connection-mode"] = { mode: "localCli" };
+    localCliEligibleMock.mockReturnValue(true);
+    const { get } = makeHarness();
+    await get("saveConnectionMode").handler({ connectionMode: "api" });
+    expect(connectionModeStore["openai-connection-mode"]).toEqual({ mode: "api" });
+  });
+
+  it("saveConnectionMode FAILS CLOSED when the manage gate rejects (no write runs)", async () => {
+    localCliEligibleMock.mockReturnValue(true);
+    const requireManage = vi.fn(async () => { throw new Error("forbidden"); });
+    const { get } = makeHarness({ requireManage });
+    await expect(get("saveConnectionMode").handler({ connectionMode: "localCli" })).rejects.toThrow("forbidden");
+    expect(writeConnectorConfigToDatabaseMock).not.toHaveBeenCalled();
   });
 
   it("redirect classification: an EMPTY ?error= is treated as an ERROR (not success), with a generic fallback", async () => {
