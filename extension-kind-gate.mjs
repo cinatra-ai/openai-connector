@@ -2096,6 +2096,83 @@ export function validateConnectorPackageShape(pkg) {
   return errors;
 }
 
+/**
+ * LLM provider-adapter surface registration (llm-providers S4, cinatra#1715).
+ *
+ * A connector that registers the `llm-provider-adapter` capability — the
+ * relocated per-vendor request-translation adapter that the host's packages/llm
+ * resolves through `createAdapter()` instead of its in-core factory switch —
+ * must do so WELL-FORMED. The `LlmProviderAdapterSurface` ABI is
+ * `{ abiVersion, providerId, createAdapter }`, and `providerId` must name the
+ * connector's OWN vendor slug (the `<slug>` of `@<vendor>/<slug>-connector`).
+ *
+ * CONDITIONAL + value-INDEPENDENT: this fires ONLY when the serverEntry source
+ * actually registers such a surface (matched textually, comments stripped), so
+ * every non-LLM connector — and this gate's copies shipped into them — is
+ * untouched. It does NOT re-list the DERIVED `abiVersion` literal (that lives in
+ * the sdk-extensions leaf and is AUTHORITATIVELY resolved host-side at call
+ * time, where a wrong/unrecognised abiVersion fails CLOSED); it is a gross-
+ * authoring-drift pre-screen of the registration SHAPE, matching how the rest of
+ * this self-contained gate stays value-independent.
+ */
+export function validateLlmProviderAdapterRegistration(packageRoot, pkg) {
+  const errors = [];
+  const entry = resolveServerEntry(packageRoot, pkg);
+  // serverEntry resolution problems are reported by validateCommon; nothing to
+  // assert about a registration we cannot locate.
+  if (entry.kind !== "resolved") return errors;
+  let source;
+  try {
+    source = stripComments(readFileSync(entry.abs, "utf8"));
+  } catch {
+    return errors; // an unreadable entry is reported elsewhere
+  }
+  const REGISTERS_ADAPTER = /registerProvider\(\s*(["'])llm-provider-adapter\1/;
+  const startIdx = source.search(REGISTERS_ADAPTER);
+  if (startIdx < 0) return errors; // not an adapter connector — skip
+  // Scope every assertion to the adapter registration BLOCK (from its
+  // registerProvider call to the next registerProvider call, or end-of-file).
+  // The connector also registers the S1 `llm-provider-surface` capability, whose
+  // own `providerId` sits EARLIER in the file — scoping here keeps the checks
+  // from reading that neighbouring registration's fields by accident.
+  const rest = source.slice(startIdx);
+  const nextReg = rest.slice(1).search(/registerProvider\(/);
+  const block = nextReg >= 0 ? rest.slice(0, nextReg + 1) : rest;
+  // The registration object must carry the full surface ABI shape.
+  for (const key of ["abiVersion", "providerId", "createAdapter"]) {
+    if (!new RegExp(`\\b${key}\\b`).test(block)) {
+      errors.push(
+        `the "llm-provider-adapter" registration is missing "${key}" — the ` +
+          `LlmProviderAdapterSurface ABI is { abiVersion, providerId, createAdapter }`,
+      );
+    }
+  }
+  // providerId must name the connector's own vendor slug (@<vendor>/<slug>-connector),
+  // and it must be a STRING LITERAL so the gate can actually verify that — a
+  // non-literal (computed) providerId would silently bypass the slug invariant.
+  const nameMatch = typeof pkg?.name === "string" ? pkg.name.match(/^@[^/]+\/(.+)-connector$/) : null;
+  const slug = nameMatch ? nameMatch[1] : null;
+  const pid = block.match(/providerId\s*:\s*(["'])([^"']+)\1/);
+  if (slug) {
+    if (!pid) {
+      // The shape check above already errors when `providerId` is entirely
+      // absent; this fires only when it IS present but not a verifiable literal.
+      if (/\bproviderId\b/.test(block)) {
+        errors.push(
+          `the "llm-provider-adapter" registration providerId must be a STRING LITERAL ` +
+            `naming the connector vendor slug "${slug}" (@<vendor>/<slug>-connector) so the gate can verify it`,
+        );
+      }
+    } else if (pid[2] !== slug) {
+      errors.push(
+        `the "llm-provider-adapter" registration providerId "${pid[2]}" must equal ` +
+          `the connector vendor slug "${slug}" (@<vendor>/<slug>-connector)`,
+      );
+    }
+  }
+  return errors;
+}
+
 export function validateConnector(packageRoot) {
   let pkg;
   try {
@@ -2103,7 +2180,10 @@ export function validateConnector(packageRoot) {
   } catch (err) {
     return [`could not read package.json: ${err instanceof Error ? err.message : String(err)}`];
   }
-  return validateConnectorPackageShape(pkg);
+  return [
+    ...validateConnectorPackageShape(pkg),
+    ...validateLlmProviderAdapterRegistration(packageRoot, pkg),
+  ];
 }
 
 // ===========================================================================
