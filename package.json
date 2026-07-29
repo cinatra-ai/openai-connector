@@ -58,6 +58,31 @@
     ],
     "sdkAbiRange": "^2",
     "providerConfigKey": "cinatra-openai",
+    "llmProvider": {
+      "abiVersion": 2,
+      "provider": "openai",
+      "capabilities": {
+        "function_tools": true,
+        "media_input": false,
+        "native_mcp": { "status": "native", "approval": "approval_required" }
+      },
+      "models": {
+        "default": "gpt-5.5",
+        "allowed": [
+          "gpt-5.5",
+          "gpt-5.4",
+          "gpt-5.4-mini",
+          "gpt-5",
+          "gpt-5-mini",
+          "gpt-4.1",
+          "gpt-4.1-mini",
+          "gpt-4o",
+          "gpt-4o-mini"
+        ]
+      },
+      "defaultCapable": true,
+      "wizardEligible": true
+    },
     "uiSurface": "schema-config",
     "configSchema": {
       "title": "OpenAI",
