@@ -99,6 +99,11 @@
               "message": "OpenAI settings saved."
             },
             {
+              "name": "savedWithoutConnectionService",
+              "tone": "warning",
+              "message": "The OpenAI API key was validated and saved, but the connection-service copy did not complete and the remote state could not be confirmed. OpenAI works now; check the connection service and save the key again so the copy is re-made and verified."
+            },
+            {
               "name": "cleared",
               "tone": "warning",
               "message": "The saved OpenAI API key was removed."

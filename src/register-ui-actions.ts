@@ -40,6 +40,10 @@ import {
 } from "./index";
 import { getOpenAIDeps } from "./deps";
 import type { OpenAIManageGuard } from "./actions-core";
+import {
+  OPENAI_PARTIAL_SAVE_BANNER,
+  OPENAI_PARTIAL_SAVE_NOTICE_CODE,
+} from "./partial-save-outcome";
 
 /** The write actions this connector reuses from `actions-core` (FormData +
  *  redirect). Kept structural so this module never re-implements their
@@ -49,8 +53,16 @@ export type OpenAIConnectionActions = {
   clearConnection(): Promise<void>;
 };
 
-/** A banner-shaped result the schema-config `banner` field renders. */
-export type BannerResult = { banner: "saved" | "cleared" | "error"; error?: string };
+/** A banner-shaped result the schema-config `banner` field renders.
+ *  `savedWithoutConnectionService` is the DEGRADED save (cinatra#2094 F9): the
+ *  credential is stored and usable, but the connection-service copy could not be
+ *  completed or confirmed — a distinct outcome so it can never read as a clean
+ *  success. Every name here must exist as a declared banner variant in
+ *  `package.json#cinatra.configSchema`. */
+export type BannerResult = {
+  banner: "saved" | "cleared" | "error" | typeof OPENAI_PARTIAL_SAVE_BANNER;
+  error?: string;
+};
 
 /**
  * `redirect()` in a server action throws an error whose `digest` begins with
@@ -65,6 +77,13 @@ function nextRedirectLocation(error: unknown): string | null {
   // segment defensively (fall back to the whole digest if the shape changes).
   const parts = digest.split(";");
   return parts[2] ?? digest;
+}
+
+/** Does this redirect target carry the DEGRADED-save notice code (cinatra#2094
+ *  F9)? A successful-but-partial save redirects to the success target plus
+ *  `?notice=<code>`, so it must NOT be classified as a clean success. */
+function carriesPartialSaveNotice(location: string): boolean {
+  return new RegExp(`[?&]notice=${OPENAI_PARTIAL_SAVE_NOTICE_CODE}(?:&|$)`).test(location);
 }
 
 /** Decode the `error` query param an `actions-core` error-redirect carries
@@ -192,6 +211,11 @@ async function runWrite(
       const errMsg = errorMessageFromLocation(location);
       if (errMsg !== null) {
         return { banner: "error", error: errMsg || "Unable to save the OpenAI settings." };
+      }
+      // A SUCCESS target carrying the degraded-save notice is a partial save, not
+      // a clean one (cinatra#2094 F9).
+      if (carriesPartialSaveNotice(location)) {
+        return { banner: OPENAI_PARTIAL_SAVE_BANNER };
       }
       // No `error` param → the success redirect target.
       return { banner: successBanner };
