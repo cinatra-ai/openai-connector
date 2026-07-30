@@ -43,7 +43,12 @@ import {
 } from "../deps";
 
 const updateOpenAIConnection = vi.fn(async () => {});
-const createNotification = vi.fn(async () => {});
+// Typed param (the deps contract's own notification payload) so
+// `.mock.calls[0][0]` is well-typed under strict tsc — a zero-arg `vi.fn` gives
+// `calls` the element type `[]`, and indexing that is TS2493 even through `?.`.
+const createNotification = vi.fn(
+  async (_input: Parameters<OpenAIConnectorDeps["createNotification"]>[0]) => {},
+);
 const clearConnectionRecords = vi.fn(async (_connectorKey: string) => {});
 
 function installDeps() {
@@ -107,9 +112,7 @@ describe("saveConnection — validate-before-persist ordering", () => {
     // And the live-validated credential IS persisted.
     expect(updateOpenAIConnection).toHaveBeenCalledTimes(1);
     // Reported, never silent — and as a WARNING, not a plain success.
-    const notification = createNotification.mock.calls[0]?.[0] as
-      | { kind?: string; title?: string; body?: string }
-      | undefined;
+    const notification = createNotification.mock.calls[0]?.[0];
     expect(notification?.kind).toBe("warning");
     expect(notification?.body).toContain("connection service");
     // Worded for what is actually KNOWN: the remote copy is UNCONFIRMED, never
@@ -210,7 +213,7 @@ describe("saveConnection — validate-before-persist ordering", () => {
       ).rejects.toMatchObject({
         redirectUrl: "/configuration/llm?notice=openai-connection-service-not-synced",
       });
-      const notification = createNotification.mock.calls[0]?.[0] as { body?: string } | undefined;
+      const notification = createNotification.mock.calls[0]?.[0];
       expect(notification?.body).not.toContain("sk-super-secret-value-1234");
       expect(notification?.body).toContain("[REDACTED]");
       const logged = warn.mock.calls.map((c) => c.join(" ")).join(" ");
