@@ -304,7 +304,30 @@ function translateTools(tools: LlmTool[], resolvedModel: string) {
     }
   }
 
-  return defs.length > MAX_FUNCTION_TOOLS ? defs.slice(0, MAX_FUNCTION_TOOLS) : defs;
+  if (defs.length <= MAX_FUNCTION_TOOLS) return defs;
+  // Over OpenAI's tool ceiling. Truncate ONLY generic function tools, and only
+  // from the END — the capability surfaces (the single native shell,
+  // sandbox_execute, skill_file_read, mcp, web_search) must SURVIVE. A blind
+  // slice could drop the native shell, because the execution capability is
+  // APPENDED last by injectExecutionCapability: the singular-native-shell
+  // rule's "exactly one native shell" would silently become "none" while the
+  // injected system cue still advertises the sandbox. Byte-identical for every
+  // request at or under the ceiling (cinatra#1705 AC4).
+  const isGenericFunctionTool = (d: Record<string, unknown>) =>
+    d.type === "function" &&
+    d.name !== SANDBOX_EXECUTE_TOOL_NAME &&
+    d.name !== SKILL_FILE_READ_TOOL_NAME;
+  let overflow = defs.length - MAX_FUNCTION_TOOLS;
+  const kept: Record<string, unknown>[] = [];
+  for (let i = defs.length - 1; i >= 0; i--) {
+    if (overflow > 0 && isGenericFunctionTool(defs[i])) {
+      overflow--;
+      continue;
+    }
+    kept.push(defs[i]);
+  }
+  kept.reverse();
+  return kept;
 }
 
 function findFunctionToolByName(tools: LlmTool[], name: string): LlmFunctionTool | undefined {
