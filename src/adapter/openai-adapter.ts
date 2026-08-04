@@ -29,6 +29,10 @@ import type {
   LlmBatchResult,
   LlmBatchOutputLine,
   LlmBatchStatus,
+  LlmBatchV2SubmitInput,
+  LlmBatchV2SubmitResult,
+  LlmBatchV2State,
+  LlmBatchV2Outcome,
 } from "@cinatra-ai/sdk-extensions/llm-provider-adapter-contract";
 // Native attachment emission is guarded; legacy behavior remains
 // byte-identical when no resolvedAttachments are present. The openai value
@@ -54,6 +58,18 @@ import {
   SKILL_FILE_READ_PARAMETERS,
   skillFileReadDescription,
 } from "./adapter-floor";
+// Batch-v2 (cinatra#2396): the pure Batch-API ⟷ neutral-contract mappers.
+import {
+  OPENAI_BATCH_COMPLETION_WINDOW,
+  OPENAI_BATCH_ENDPOINT,
+  OPENAI_BATCH_INPUT_FILENAME,
+  streamBatchOutputLines,
+  toBatchInputJsonl,
+  toNeutralBatchState,
+  toNeutralBatchStatus,
+  toNeutralOutcome,
+} from "./openai-batch-v2";
+import { BatchFailedError, BatchResultsNotReadyError } from "./adapter-errors";
 
 /**
  * Structural mirror of the openai-connector's `OpenAIConnectionConfig`
@@ -1329,6 +1345,113 @@ export function createOpenAIProviderAdapter(connection: OpenAIConnectionConfig):
         batchId: batch.id,
         status: batch.status as LlmBatchStatus,
       };
+    },
+
+    // -----------------------------------------------------------------------
+    // Batch API v2 — the provider-NEUTRAL surface (cinatra#2396).
+    //
+    // The four v1 members above are UNCHANGED and stay that way: they are
+    // shipped ABI, and the whole reason v2 is additive rather than a reshape is
+    // that reshaping them would break every caller holding the OpenAI-canonical
+    // contract. Core prefers this surface whenever it is declared and falls
+    // back to those methods when it is not.
+    //
+    // `version: 2 as const` is written literally rather than value-imported
+    // from the SDK leaf: under old-host/new-connector skew the host-resolved
+    // `@cinatra-ai/sdk-extensions` may predate the constant, and a runtime
+    // import would fail to resolve. The TYPE still pins it (the member is typed
+    // `LlmBatchV2Surface` on `LlmProviderAdapter`), so drift is a compile error.
+    //
+    // NO FILE IDS CROSS THIS SURFACE. OpenAI's batch mechanism IS file-based,
+    // so submit still uploads a JSONL input file and download still resolves
+    // the output/error files — but all of that is INTERNAL: `submit` returns
+    // `{batchId, status}` (never `inputFileId`), `retrieve` reports no file
+    // ids, and `download` is addressed by BATCH id. A v2 consumer never learns
+    // that a file existed.
+    //
+    // BYTE IDENTITY with the v1 leg is the load-bearing property here: the
+    // JSONL this path uploads is, for the same descriptor, byte-for-byte what
+    // core's v1 bridge renders (see `./openai-batch-v2`). The two legs must
+    // bill and answer identically.
+    // -----------------------------------------------------------------------
+    batchV2: {
+      version: 2 as const,
+
+      async submit(input: LlmBatchV2SubmitInput): Promise<LlmBatchV2SubmitResult> {
+        // Same construction as `submitBatch` above, one step earlier: the
+        // native body is built from the neutral descriptor HERE instead of
+        // arriving pre-rendered from the caller.
+        const jsonl = toBatchInputJsonl(input.requests, model);
+        const buffer = Buffer.from(jsonl, "utf-8");
+        const file = new File([new Uint8Array(buffer)], OPENAI_BATCH_INPUT_FILENAME, {
+          type: "application/jsonl",
+        });
+        const uploaded = await client.files.create({
+          file,
+          purpose: "batch",
+        });
+        const batch = await client.batches.create({
+          input_file_id: uploaded.id,
+          endpoint: OPENAI_BATCH_ENDPOINT,
+          completion_window: OPENAI_BATCH_COMPLETION_WINDOW,
+          // OpenAI HAS a native metadata slot, so best-effort tags survive the
+          // round trip on this provider (they do not on Anthropic).
+          metadata: input.metadata ?? undefined,
+        });
+        return {
+          batchId: batch.id,
+          status: toNeutralBatchStatus(batch.status),
+        };
+      },
+
+      async retrieve(batchId: string): Promise<LlmBatchV2State> {
+        return toNeutralBatchState(await client.batches.retrieve(batchId));
+      },
+
+      async download(batchId: string): Promise<LlmBatchV2Outcome[]> {
+        // Retrieve FIRST — the file ids only exist on the batch object, and the
+        // status decides whether asking for outcomes is meaningful at all.
+        const batch = await client.batches.retrieve(batchId);
+        const status = toNeutralBatchStatus(batch.status);
+        if (status === "failed") {
+          // TERMINAL, not retryable: a failed batch never acquires outcomes, so
+          // the "not ready" sentinel here would invite a consumer to poll
+          // forever.
+          throw new BatchFailedError(
+            "openai",
+            batchId,
+            batch.errors?.data?.[0]?.message ?? null,
+          );
+        }
+        if (status !== "ended") {
+          throw new BatchResultsNotReadyError("openai", batchId, status);
+        }
+        // BOTH streams: OpenAI splits success and failure across two files and
+        // the neutral contract promises one merged outcome list. Either id can
+        // legitimately be absent (an all-success batch writes no error file).
+        const fileIds = [batch.output_file_id, batch.error_file_id].filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        );
+        // SEQUENTIAL and STREAMED, not `Promise.all` + `.text()`: a large batch
+        // writes hundreds of megabytes per file, and reading both at once as
+        // whole strings would hold two files plus their parsed rows resident
+        // together. Peak memory now tracks the outcome list, not the transport.
+        const outcomes: LlmBatchV2Outcome[] = [];
+        for (const fileId of fileIds) {
+          const response = await client.files.content(fileId);
+          for await (const row of streamBatchOutputLines(response)) {
+            outcomes.push(toNeutralOutcome(row));
+          }
+        }
+        return outcomes;
+      },
+
+      async cancel(batchId: string): Promise<LlmBatchV2State> {
+        // OpenAI's cancel returns the full batch object, so the neutral state
+        // is complete here — unlike the v1 `cancelBatch` above, whose contract
+        // carries only `{batchId, status}`.
+        return toNeutralBatchState(await client.batches.cancel(batchId));
+      },
     },
   };
 }
