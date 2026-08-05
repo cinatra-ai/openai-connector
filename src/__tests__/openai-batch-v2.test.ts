@@ -751,7 +751,7 @@ describe("streamBatchOutputLines", () => {
     body?: ReadableStream<Uint8Array> | null;
     text(): Promise<string>;
   }) {
-    const out = [];
+    const out: LlmBatchOutputLine[] = [];
     for await (const row of streamBatchOutputLines(response)) out.push(row);
     return out;
   }
