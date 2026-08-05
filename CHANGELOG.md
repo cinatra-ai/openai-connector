@@ -6,6 +6,7 @@ All notable changes to this project are documented here. This project adheres to
 
 ## Unreleased
 
+- Added the `getConfiguredAPIKey` reader to the `llm-provider-surface` registration (mirroring the anthropic connector), so the host's keyed credential fingerprint works on the OpenAI path. Without it a committed OpenAI setup stored a null fingerprint and tripped the fail-closed reopened-key flow on every commit (cinatra-ai/cinatra#2453).
 - Reinstated the singular-native-shell provider-translation battery deleted from core (`src/__tests__/sandbox-provider-translation.test.ts`), driving the real adapter with scripted Responses-API shapes over both `generate` and `stream`.
 - Fixed: at OpenAI's 128-tool ceiling the request-translation layer sliced the tools array blindly, which could drop the single native `shell` entry (the execution capability is appended last) while the injected system cue still advertised the sandbox. Truncation now removes only generic function tools, from the end; the native shell, `sandbox_execute`, `skill_file_read`, `mcp` and `web_search` entries always survive. Requests at or under the ceiling are byte-identical.
 

@@ -32,6 +32,7 @@ vi.mock("../actions-core", () => ({
 }));
 
 import { register } from "../register";
+import { getConfiguredOpenAIConnection } from "../index";
 
 type RegisteredProvider = { packageName: string; impl: Record<string, unknown> };
 
@@ -73,6 +74,29 @@ describe("register(ctx) — Stage 2 llm-provider-surface members", () => {
       kind: "request",
       body: { a: 1 },
     });
+  });
+
+  // cinatra#2453: the host's keyed credential fingerprint reads the raw
+  // configured key through this member; a surface without it is `unreadable`
+  // host-side and forces the fail-closed reopened-key flow on OpenAI commits.
+  it("registers getConfiguredAPIKey returning the resolved connection's key", async () => {
+    const { impl } = activate();
+    const getConfiguredAPIKey = impl.getConfiguredAPIKey as () => Promise<string | null>;
+    expect(typeof getConfiguredAPIKey).toBe("function");
+    vi.mocked(getConfiguredOpenAIConnection).mockResolvedValueOnce({
+      apiKey: "sk-test-key",
+      defaultModel: "gpt-5.5",
+    } as Awaited<ReturnType<typeof getConfiguredOpenAIConnection>>);
+    await expect(getConfiguredAPIKey()).resolves.toBe("sk-test-key");
+    // The reader resolves the STORED connection — never a caller-passed one.
+    expect(getConfiguredOpenAIConnection).toHaveBeenCalledWith();
+  });
+
+  it("getConfiguredAPIKey returns null (host `absent`) when no connection resolves", async () => {
+    const { impl } = activate();
+    const getConfiguredAPIKey = impl.getConfiguredAPIKey as () => Promise<string | null>;
+    vi.mocked(getConfiguredOpenAIConnection).mockResolvedValueOnce(null);
+    await expect(getConfiguredAPIKey()).resolves.toBeNull();
   });
 });
 

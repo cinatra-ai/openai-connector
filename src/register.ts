@@ -199,6 +199,14 @@ export function register(ctx: ExtensionHostContext): void {
         getConfiguredOpenAIConnection(
           (connection ?? undefined) as OpenAIConnectionConfig | undefined,
         ),
+      // Raw configured-key reader (cinatra#2453): the host's keyed credential
+      // fingerprint treats a surface WITHOUT this member as `unreadable`, not
+      // "no key" — so its absence forced the fail-closed reopened-key flow on
+      // every committed OpenAI setup. `getConfiguredOpenAIConnection()` already
+      // resolves nango-first then stored-key and returns null unless a
+      // non-empty key exists, so this maps cleanly onto the host's
+      // readable/absent split (mirrors the anthropic connector's reader).
+      getConfiguredAPIKey: async () => (await getConfiguredOpenAIConnection())?.apiKey ?? null,
       listAvailableModels: (input: { projectId?: string; organizationId?: string }) =>
         listAvailableOpenAIModels(input),
       filterVisibleModels: (models: string[]) => filterVisibleOpenAIModels(models),
