@@ -50,6 +50,7 @@
       "name": "Cinatra"
     },
     "displayName": "OpenAI",
+    "logo": "./cinatra/logo.svg",
     "dependencies": [],
     "serverEntry": "./register",
     "requestedHostPorts": [
