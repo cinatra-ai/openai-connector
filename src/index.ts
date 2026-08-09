@@ -138,22 +138,11 @@ function buildLogTimestamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-// Fail-closed development-mode probe: resolves the host runtime-mode service,
-// treating any absence/error as PRODUCTION so body logging defaults OFF when the
-// signal is unavailable. Wrapped so the logging gate never throws.
-function isOpenAIDevelopmentMode(): boolean {
-  try {
-    return getOpenAIDeps().isAppDevelopmentMode();
-  } catch {
-    return false;
-  }
-}
-
 function isOpenAILoggingEnabled() {
   const connection = getOpenAIDeps().readOpenAIConnectionFromDatabase();
-  // Default OFF in production (dev-only default-on): an explicit stored
-  // preference wins; unset follows the runtime mode.
-  return resolveLoggingEnabled(connection?.loggingEnabled, isOpenAIDevelopmentMode());
+  // Default OFF everywhere (cinatra#2581 "dev-off" ruling): an explicit
+  // stored preference wins; unset is OFF regardless of runtime mode.
+  return resolveLoggingEnabled(connection?.loggingEnabled);
 }
 
 function sleep(milliseconds: number) {
@@ -163,7 +152,7 @@ function sleep(milliseconds: number) {
 export function getOpenAILoggingSettings() {
   const connection = getOpenAIDeps().readOpenAIConnectionFromDatabase();
   return {
-    enabled: resolveLoggingEnabled(connection?.loggingEnabled, isOpenAIDevelopmentMode()),
+    enabled: resolveLoggingEnabled(connection?.loggingEnabled),
     directory: OPENAI_API_LOG_DIRECTORY,
   };
 }
@@ -230,11 +219,11 @@ export async function getConfiguredOpenAIConnection(connection?: OpenAIConnectio
     projectId: connection?.projectId ?? storedConnection?.projectId,
     organizationId: connection?.organizationId ?? storedConnection?.organizationId,
     serviceTier: connection?.serviceTier ?? storedConnection?.serviceTier ?? getDefaultOpenAIServiceTier(),
-    // Unset defaults to dev-only (OFF in production), mirroring the write gate
-    // and the adjacent promptCaching default — never a blanket default-on.
+    // Unset defaults OFF regardless of runtime mode (cinatra#2581 "dev-off"
+    // ruling): an explicit operator choice is the only ON path. Mirrors the
+    // write gate (isOpenAILoggingEnabled) — never a blanket default-on.
     loggingEnabled: resolveLoggingEnabled(
       connection?.loggingEnabled ?? storedConnection?.loggingEnabled,
-      isOpenAIDevelopmentMode(),
     ),
     promptCachingEnabled:
       connection?.promptCachingEnabled ??
