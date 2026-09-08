@@ -125,20 +125,6 @@ export interface OpenAIConnectorDeps {
   /** The host-resolved on-disk directory `captureLog` entries land in — a
    *  read-only display value for the telemetry page (cinatra#981). */
   captureLogDirectory: (channel: string) => string;
-  /** Read the skills catalog — NARROW structural return: only the fields the
-   *  shell-skill mounting path reads from each skill. */
-  readSkillsCatalog(): Promise<{
-    skills: Array<{
-      id: string;
-      name: string;
-      slug: string;
-      description: string;
-      packageId: string;
-      packageName: string;
-      packageSlug: string;
-      sourcePath?: string;
-    }>;
-  }>;
 }
 
 const OPENAI_DEPS_KEY = Symbol.for("@cinatra-ai/openai-connector:host-deps/v1");

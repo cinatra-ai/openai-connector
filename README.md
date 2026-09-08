@@ -1,6 +1,6 @@
 # OpenAI
 
-Connect OpenAI so every agent in your workspace can run on GPT models. Holds your API key, default model, and service tier behind a single configured connection, and ships an opt-in sandboxed shell-tool runtime that lets selected agents execute commands inside a locked-down container during a run.
+Connect OpenAI so every agent in your workspace can run on GPT models. Holds your API key, default model, and service tier behind a single configured connection.
 
 ## Works with
 
@@ -14,6 +14,4 @@ Connect OpenAI so every agent in your workspace can run on GPT models. Holds you
 - Browse and filter the OpenAI models available to your key
 - Validate and store credentials, with optional Nango-backed credential storage
 - Write redactable request/response logs for debugging
-- Give selected agents a sandboxed Docker shell tool with configurable CPU, memory, network, and command policies
-- Mount catalogue skills into the sandboxed shell so agents can pick them up at run time
 - Full configuration, usage, and architecture docs in [docs/USAGE.md](docs/USAGE.md)

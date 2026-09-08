@@ -26,7 +26,11 @@
 // imported package modules (index / log-capture-channel / actions-core) carry
 // no SDK value imports.
 
-import type { ExtensionHostContext, NangoSystemSurface } from "@cinatra-ai/sdk-extensions";
+import type {
+  ExtensionHostContext,
+  NangoSystemSurface,
+  LlmProviderAdapterSurface,
+} from "@cinatra-ai/sdk-extensions";
 import {
   isOpenAIConnectionReady,
   getConfiguredOpenAIConnection,
@@ -37,14 +41,17 @@ import {
   getOpenAILoggingSettings,
   saveOpenAILoggingSettings,
   writeOpenAILogFile,
-  readOpenAIShellSettings,
-  runOpenAIShellCommandInDocker,
   type OpenAIConnectionConfig,
 } from "./index";
 import { OPENAI_LOG_CAPTURE_CHANNEL } from "./log-capture-channel";
 import { makeOpenAIConnectionActions } from "./actions-core";
 import { registerOpenAIUiActions } from "./register-ui-actions";
 import { registerOpenAIConnector, type OpenAIConnectorDeps } from "./deps";
+// The relocated OpenAI request-translation adapter (llm-providers S4,
+// cinatra#1715). The host's packages/llm resolves this connector's
+// `createAdapter()` factory through the `llm-provider-adapter` capability
+// instead of its in-core `providers/openai.ts` switch.
+import { createOpenAIProviderAdapter } from "./adapter/openai-adapter";
 
 const PACKAGE_NAME = "@cinatra-ai/openai-connector";
 
@@ -71,7 +78,6 @@ type HostOpenAIConnectionShape = {
 type HostMcpSelfClientShape = { buildHeaders(): Record<string, string> };
 type HostRuntimeModeShape = { isDevelopment(): boolean };
 type HostNotificationsShape = { create: OpenAIConnectorDeps["createNotification"] };
-type HostSkillsCatalogShape = { read: OpenAIConnectorDeps["readSkillsCatalog"] };
 
 /** Lazy per-concern host-service resolution (fail-loud on a missing service —
  * the host boot wiring publishes these before any connector call runs). */
@@ -109,7 +115,6 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
   const selfClient = () => hostService<HostMcpSelfClientShape>(ctx, "@cinatra-ai/host:mcp-self-client");
   const runtimeMode = () => hostService<HostRuntimeModeShape>(ctx, "@cinatra-ai/host:runtime-mode");
   const notifications = () => hostService<HostNotificationsShape>(ctx, "@cinatra-ai/host:notifications");
-  const skillsCatalog = () => hostService<HostSkillsCatalogShape>(ctx, "@cinatra-ai/host:skills-catalog");
   const nango = () => nangoSystem(ctx);
   return {
     readConnectorConfigFromDatabase: <T,>(connectorId: string, fallback: T): T =>
@@ -163,7 +168,6 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): OpenAIConnectorDeps {
         return { openai: nango().connectionIds.openai };
       },
     },
-    readSkillsCatalog: () => skillsCatalog().read(),
   };
 }
 
@@ -203,6 +207,14 @@ export function register(ctx: ExtensionHostContext): void {
         getConfiguredOpenAIConnection(
           (connection ?? undefined) as OpenAIConnectionConfig | undefined,
         ),
+      // Raw configured-key reader (cinatra#2453): the host's keyed credential
+      // fingerprint treats a surface WITHOUT this member as `unreadable`, not
+      // "no key" — so its absence forced the fail-closed reopened-key flow on
+      // every committed OpenAI setup. `getConfiguredOpenAIConnection()` already
+      // resolves nango-first then stored-key and returns null unless a
+      // non-empty key exists, so this maps cleanly onto the host's
+      // readable/absent split (mirrors the anthropic connector's reader).
+      getConfiguredAPIKey: async () => (await getConfiguredOpenAIConnection())?.apiKey ?? null,
       listAvailableModels: (input: { projectId?: string; organizationId?: string }) =>
         listAvailableOpenAIModels(input),
       filterVisibleModels: (models: string[]) => filterVisibleOpenAIModels(models),
@@ -218,34 +230,43 @@ export function register(ctx: ExtensionHostContext): void {
       // check + redaction; absence host-side degrades to a no-op.
       writeLogFile: (input: { label: string; kind: "request" | "response"; body: unknown }) =>
         writeOpenAILogFile({ label: input.label, kind: input.kind, body: input.body }),
-      // GATED shell-tool member (least privilege): a settings reader + the
-      // docker-confined executor — never a raw client/spawn handle. The
-      // STORED settings are the single policy authority: this ABI accepts NO
-      // administration/settings override (fields are picked explicitly, never
-      // spread), so the connector-side enabled/allowlist/limit gating in
-      // `runOpenAIShellCommandInDocker` cannot be bypassed through the
-      // capability surface.
-      shellTools: {
-        readSettings: () => readOpenAIShellSettings(),
-        runCommandInDocker: (input: {
-          shellCommand: string;
-          cwd?: string;
-          timeoutMs?: number;
-          maxOutputLength?: number;
-        }) =>
-          runOpenAIShellCommandInDocker({
-            shellCommand: input.shellCommand,
-            cwd: input.cwd,
-            timeoutMs: input.timeoutMs,
-            maxOutputLength: input.maxOutputLength,
-          }),
-      },
       actions: {
         saveConnection: (formData: FormData) => actions.saveConnection(formData),
         clearConnection: () => actions.clearConnection(),
-        saveSkillsSettings: (formData: FormData) => actions.saveSkillsSettings(formData),
       },
     },
+  });
+
+  // ---- llm-provider-adapter surface (llm-providers S4, cinatra#1715) ----
+  //
+  // The full OpenAI request-translation adapter now lives IN this connector
+  // (relocated from the host's packages/llm `providers/openai.ts`). The host's
+  // packages/llm resolves the adapter through this NEW versioned
+  // `llm-provider-adapter` capability instead of its in-core factory switch:
+  // once a trusted surface is registered the host calls `createAdapter()` and
+  // does NOT fall back to the legacy in-core factory (the host fails CLOSED on
+  // an abiVersion it does not recognise). `createAdapter()` resolves the
+  // connector-owned connection internally and returns null when the connector is
+  // present-but-unconfigured — an AUTHORITATIVE "not configured" (the registry's
+  // existing null-adapter semantics; no new error class). Registration does no
+  // host I/O (probe-safe). The capability-id is a string literal because it stays
+  // host-fenced in the SDK (`./internal`), exactly like the S1 surface above.
+  ctx.capabilities.registerProvider("llm-provider-adapter", {
+    packageName: PACKAGE_NAME,
+    impl: {
+      // ABI v1 is inlined as a literal (NOT value-imported from the host-peer
+      // SDK — the host-peer-value-import ban keeps @cinatra-ai/sdk-extensions
+      // TYPE-only over the serverEntry graph). The `satisfies
+      // LlmProviderAdapterSurface` below type-checks this literal against the
+      // leaf's `typeof LLM_PROVIDER_ADAPTER_ABI_VERSION`, so an ABI bump breaks
+      // the build here rather than drifting silently.
+      abiVersion: 1,
+      providerId: "openai",
+      createAdapter: async () => {
+        const connection = await getConfiguredOpenAIConnection();
+        return connection ? createOpenAIProviderAdapter(connection) : null;
+      },
+    } satisfies LlmProviderAdapterSurface,
   });
 
   // ---- schema-config named actions (cinatra#782) ----
@@ -255,9 +276,8 @@ export function register(ctx: ExtensionHostContext): void {
   // renders it WITHOUT connector React. Its fields reference these host-
   // registered named actions BY ID (READ/PROBE/WRITE), dispatched through
   // `/api/extensions/{installId}/actions/{actionId}`. The connection writes
-  // REUSE the exact `actions-core` bodies (same validation/gating/model-list);
-  // the skills write calls `saveOpenAIShellSettings` directly with parsed
-  // arrays. Every action re-asserts the "manage" gate first (the host endpoint
+  // REUSE the exact `actions-core` bodies (same validation/gating/model-list).
+  // Every action re-asserts the "manage" gate first (the host endpoint
   // only enforces "use"-tier). Registration does no host I/O (probe-safe).
   // Requires the "ui" host port (declared in cinatra.requestedHostPorts).
   registerOpenAIUiActions(ctx, { requireManage, actions });

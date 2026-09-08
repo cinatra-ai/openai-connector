@@ -4,7 +4,6 @@ import { resolveLoggingEnabled } from "./logging-policy";
 import type { HostRequiredPackageDefinition } from "@cinatra-ai/sdk-extensions";
 import { getOpenAIDeps } from "./deps";
 import type { OpenAIServiceTier } from "./openai-connection-types";
-export * from "./openai-skills";
 
 // Re-exported from the cycle-safe leaf (./log-capture-channel) — defining the
 // `const` in the barrel caused an ESM Temporal Dead Zone ReferenceError
@@ -124,22 +123,11 @@ export function buildOpenAIRequestHeaders(input: {
   } satisfies Record<string, string>;
 }
 
-// Fail-closed development-mode probe: resolves the host runtime-mode service,
-// treating any absence/error as PRODUCTION so body logging defaults OFF when the
-// signal is unavailable. Wrapped so the logging gate never throws.
-function isOpenAIDevelopmentMode(): boolean {
-  try {
-    return getOpenAIDeps().isAppDevelopmentMode();
-  } catch {
-    return false;
-  }
-}
-
 function isOpenAILoggingEnabled() {
   const connection = getOpenAIDeps().readOpenAIConnectionFromDatabase();
-  // Default OFF in production (dev-only default-on): an explicit stored
-  // preference wins; unset follows the runtime mode.
-  return resolveLoggingEnabled(connection?.loggingEnabled, isOpenAIDevelopmentMode());
+  // Default OFF everywhere (cinatra#2581 "dev-off" ruling): an explicit
+  // stored preference wins; unset is OFF regardless of runtime mode.
+  return resolveLoggingEnabled(connection?.loggingEnabled);
 }
 
 function sleep(milliseconds: number) {
@@ -149,7 +137,7 @@ function sleep(milliseconds: number) {
 export function getOpenAILoggingSettings() {
   const connection = getOpenAIDeps().readOpenAIConnectionFromDatabase();
   return {
-    enabled: resolveLoggingEnabled(connection?.loggingEnabled, isOpenAIDevelopmentMode()),
+    enabled: resolveLoggingEnabled(connection?.loggingEnabled),
     // Host-resolved (cinatra#981) — this connector no longer owns a raw
     // filesystem path, only the channel name.
     directory: getOpenAIDeps().captureLogDirectory(OPENAI_LOG_CAPTURE_CHANNEL),
@@ -227,11 +215,11 @@ export async function getConfiguredOpenAIConnection(connection?: OpenAIConnectio
     projectId: connection?.projectId ?? storedConnection?.projectId,
     organizationId: connection?.organizationId ?? storedConnection?.organizationId,
     serviceTier: connection?.serviceTier ?? storedConnection?.serviceTier ?? getDefaultOpenAIServiceTier(),
-    // Unset defaults to dev-only (OFF in production), mirroring the write gate
-    // and the adjacent promptCaching default — never a blanket default-on.
+    // Unset defaults OFF regardless of runtime mode (cinatra#2581 "dev-off"
+    // ruling): an explicit operator choice is the only ON path. Mirrors the
+    // write gate (isOpenAILoggingEnabled) — never a blanket default-on.
     loggingEnabled: resolveLoggingEnabled(
       connection?.loggingEnabled ?? storedConnection?.loggingEnabled,
-      isOpenAIDevelopmentMode(),
     ),
     promptCachingEnabled:
       connection?.promptCachingEnabled ??

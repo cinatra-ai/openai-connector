@@ -1,6 +1,6 @@
 {
   "name": "@cinatra-ai/openai-connector",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "license": "Apache-2.0",
   "type": "module",
   "files": [
@@ -15,7 +15,7 @@
     "./register": "./src/register.ts",
     "./deps": "./src/deps.ts",
     "./actions": "./src/actions.ts",
-    "./log-directory": "./src/log-directory.ts",
+    "./log-capture-channel": "./src/log-capture-channel.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -23,8 +23,7 @@
     "lint": "eslint . --no-inline-config"
   },
   "dependencies": {
-    "@openai/agents": "^0.11.4",
-    "openai": "^6.38.0"
+    "openai": "^6.43.0"
   },
   "peerDependencies": {
     "@cinatra-ai/sdk-extensions": "*",
@@ -39,8 +38,8 @@
     }
   },
   "devDependencies": {
-    "@typescript-eslint/parser": "8.61.0",
-    "eslint": "10.4.1",
+    "@typescript-eslint/parser": "8.65.0",
+    "eslint": "10.7.0",
     "typescript": "5.9.3"
   },
   "cinatra": {
@@ -51,6 +50,7 @@
       "name": "Cinatra"
     },
     "displayName": "OpenAI",
+    "logo": "./cinatra/logo.svg",
     "dependencies": [],
     "serverEntry": "./register",
     "requestedHostPorts": [
@@ -59,10 +59,36 @@
     ],
     "sdkAbiRange": "^2",
     "providerConfigKey": "cinatra-openai",
+    "llmProvider": {
+      "abiVersion": 2,
+      "provider": "openai",
+      "capabilities": {
+        "function_tools": true,
+        "media_input": false,
+        "native_mcp": { "status": "native", "approval": "approval_required" }
+      },
+      "models": {
+        "default": "gpt-5.5",
+        "allowed": [
+          "gpt-5.5",
+          "gpt-5.4",
+          "gpt-5.4-mini",
+          "gpt-5",
+          "gpt-5-mini",
+          "gpt-4.1",
+          "gpt-4.1-mini",
+          "gpt-4o",
+          "gpt-4o-mini"
+        ]
+      },
+      "defaultCapable": true,
+      "wizardEligible": true
+    },
     "uiSurface": "schema-config",
     "configSchema": {
       "title": "OpenAI",
-      "description": "Connect OpenAI through Nango for Cinatra's model-backed workflows, and configure the sandboxed shell-skill executor policy. Only workspace admins can change these settings.",
+      "hydrateAction": "currentConfig",
+      "description": "Connect OpenAI through Nango for Cinatra's model-backed workflows. Only workspace admins can change these settings.",
       "fields": [
         {
           "kind": "banner",
@@ -72,6 +98,11 @@
               "name": "saved",
               "tone": "success",
               "message": "OpenAI settings saved."
+            },
+            {
+              "name": "savedWithoutConnectionService",
+              "tone": "warning",
+              "message": "The OpenAI API key was validated and saved, but the connection-service copy did not complete and the remote state could not be confirmed. OpenAI works now; check the connection service and save the key again so the copy is re-made and verified."
             },
             {
               "name": "cleared",
@@ -95,7 +126,7 @@
           "kind": "secret",
           "key": "apiKey",
           "label": "API key",
-          "description": "Paste your OpenAI API key to connect. It is validated before it is saved. Leave blank to keep the current saved key; use Clear saved key to remove it."
+          "description": "Paste your OpenAI API key to connect. It is validated before it is saved. Leave blank to keep the current saved key; use Disconnect to remove it."
         },
         {
           "kind": "text",
@@ -140,132 +171,32 @@
         },
         {
           "kind": "named-action",
-          "label": "Save configuration",
-          "actionId": "saveConnection"
+          "label": "Connect",
+          "actionId": "saveConnection",
+          "role": "connect"
         },
         {
           "kind": "named-action",
-          "label": "Clear saved key",
+          "label": "Disconnect",
           "actionId": "clearConnection",
-          "confirm": "Remove the saved OpenAI API key? Cinatra's model-backed workflows will stop working until a new key is saved."
-        },
+          "role": "disconnect"
+        }
+      ],
+      "tabs": [
         {
-          "kind": "boolean",
-          "key": "enabled",
-          "label": "Enable sandboxed shell architecture",
-          "defaultValue": true,
-          "description": "When enabled, the package can prepare shell tool payloads plus the sandbox policy your production executor should apply."
-        },
-        {
-          "kind": "text",
-          "key": "runnerLabel",
-          "label": "Sandbox runner label"
-        },
-        {
-          "kind": "text",
-          "key": "containerImage",
-          "label": "Container image"
-        },
-        {
-          "kind": "text",
-          "key": "containerWorkspacePath",
-          "label": "Container workspace path"
-        },
-        {
-          "kind": "text",
-          "key": "containerCpuLimit",
-          "label": "Container CPU limit"
-        },
-        {
-          "kind": "text",
-          "key": "containerMemoryLimit",
-          "label": "Container memory limit"
-        },
-        {
-          "kind": "number",
-          "key": "containerPidsLimit",
-          "label": "Container PID limit",
-          "min": 16,
-          "max": 2048,
-          "defaultValue": 128
-        },
-        {
-          "kind": "number",
-          "key": "maxExecutionSeconds",
-          "label": "Max execution seconds",
-          "min": 5,
-          "max": 600,
-          "defaultValue": 30
-        },
-        {
-          "kind": "number",
-          "key": "maxOutputKilobytes",
-          "label": "Max output KB",
-          "min": 16,
-          "max": 4096,
-          "defaultValue": 256
-        },
-        {
-          "kind": "number",
-          "key": "maxFileWriteKilobytes",
-          "label": "Max file write KB",
-          "min": 16,
-          "max": 4096,
-          "defaultValue": 256
-        },
-        {
-          "kind": "boolean",
-          "key": "allowNetwork",
-          "label": "Allow outbound network access",
-          "defaultValue": false,
-          "description": "Default stays off. Only enable this when your executor also enforces the allowed-host rules below."
-        },
-        {
-          "kind": "boolean",
-          "key": "auditLogsEnabled",
-          "label": "Require executor audit logs",
-          "defaultValue": true,
-          "description": "Signals that shell_call and shell_call_output events must be preserved for auditing."
-        },
-        {
-          "kind": "free-list",
-          "key": "readRoots",
-          "label": "Readable roots",
-          "itemLabel": "path",
-          "placeholder": "/workspace"
-        },
-        {
-          "kind": "free-list",
-          "key": "writeRoots",
-          "label": "Writable roots",
-          "itemLabel": "path",
-          "placeholder": "/workspace/tmp"
-        },
-        {
-          "kind": "free-list",
-          "key": "allowedCommandPrefixes",
-          "label": "Allowed command prefixes",
-          "itemLabel": "prefix",
-          "placeholder": "ls"
-        },
-        {
-          "kind": "free-list",
-          "key": "blockedCommandPrefixes",
-          "label": "Blocked command prefixes",
-          "itemLabel": "prefix",
-          "placeholder": "rm"
-        },
-        {
-          "kind": "free-list",
-          "key": "allowedHosts",
-          "label": "Allowed outbound hosts",
-          "itemLabel": "host",
-          "placeholder": "api.example.com"
-        },
-        {
-          "kind": "named-action",
-          "label": "Save skills administration",
-          "actionId": "saveSkillsSettings"
+          "id": "help",
+          "label": "Help",
+          "fields": [
+            {
+              "kind": "advisory",
+              "label": "OpenAI setup",
+              "tone": "info",
+              "probeActionId": "connectionStatus",
+              "whenReady": "OpenAI is connected. Use the Setup tab to update your API key, Project ID, Organization ID, service tier, or default model — mini and nano models are excluded from the picker because Cinatra's web scraping and data extraction requires full-size models.",
+              "whenNotReady": "Not connected yet. On the Setup tab, paste your OpenAI API key (Project ID and Organization ID are optional scoping), choose a service tier and default model, then click Connect — the key is validated against the OpenAI API before it is stored and is never shown again.",
+              "description": "Read-only setup guidance — nothing on this tab is saved. Only workspace admins can change these settings."
+            }
+          ]
         }
       ]
     },

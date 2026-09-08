@@ -45,9 +45,8 @@ describe("redactAuthorizationDeep (@cinatra-ai/openai-connector copy)", () => {
     expect(redactAuthorizationDeep({ a: { b: "c" } })).toEqual({ a: { b: "c" } });
   });
 
-  // NOTE: writeOpenAILogFile lives in `../index`, whose import chain pulls
-  // @openai/agents (via ./openai-skills), which is not resolvable in this
-  // package's vitest sandbox. The writer's ONLY
+  // NOTE: writeOpenAILogFile lives in `../index`; exercising it end-to-end would
+  // pull the barrel's host-dep import chain. The writer's ONLY
   // redaction logic is `const content = redactAuthorizationDeep(rawContent)`
   // (see src/index.ts writeOpenAILogFile), so the pure-redactor canary above IS
   // the binding regression gate for the OpenAI chokepoint. The Anthropic side
