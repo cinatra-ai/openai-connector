@@ -1,18 +1,15 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { redactAuthorizationDeep } from "./log-redaction";
-import { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
-import { enforceLogRetention } from "./log-retention";
+import { OPENAI_LOG_CAPTURE_CHANNEL } from "./log-capture-channel";
 import { resolveLoggingEnabled } from "./logging-policy";
 import type { HostRequiredPackageDefinition } from "@cinatra-ai/sdk-extensions";
 import { getOpenAIDeps } from "./deps";
 import type { OpenAIServiceTier } from "./openai-connection-types";
 
-// Re-exported from the cycle-safe leaf (./log-directory) — defining the
+// Re-exported from the cycle-safe leaf (./log-capture-channel) — defining the
 // `const` in the barrel caused an ESM Temporal Dead Zone ReferenceError
 // under the circular import barrel ⇄ src/lib/logging.ts. Importing from the
 // leaf keeps the barrel cycle-safe.
-export { OPENAI_API_LOG_DIRECTORY } from "./log-directory";
+export { OPENAI_LOG_CAPTURE_CHANNEL } from "./log-capture-channel";
 
 export const openAIAPIConnectionPackage: HostRequiredPackageDefinition = {
   packageId: "@cinatra-ai/openai-connector",
@@ -126,18 +123,6 @@ export function buildOpenAIRequestHeaders(input: {
   } satisfies Record<string, string>;
 }
 
-function sanitizeLogLabel(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "openai-call";
-}
-
-function buildLogTimestamp() {
-  return new Date().toISOString().replace(/[:.]/g, "-");
-}
-
 function isOpenAILoggingEnabled() {
   const connection = getOpenAIDeps().readOpenAIConnectionFromDatabase();
   // Default OFF everywhere (cinatra#2581 "dev-off" ruling): an explicit
@@ -153,7 +138,9 @@ export function getOpenAILoggingSettings() {
   const connection = getOpenAIDeps().readOpenAIConnectionFromDatabase();
   return {
     enabled: resolveLoggingEnabled(connection?.loggingEnabled),
-    directory: OPENAI_API_LOG_DIRECTORY,
+    // Host-resolved (cinatra#981) — this connector no longer owns a raw
+    // filesystem path, only the channel name.
+    directory: getOpenAIDeps().captureLogDirectory(OPENAI_LOG_CAPTURE_CHANNEL),
   };
 }
 
@@ -161,6 +148,15 @@ export async function saveOpenAILoggingSettings(enabled: boolean) {
   await getOpenAIDeps().updateOpenAILoggingEnabled(enabled);
 }
 
+/**
+ * Best-effort request/response capture through the HOST-owned
+ * `ctx.logger.capture` port (cinatra#981) — storage, directory placement, and
+ * rotation/retention are entirely host-side now (see
+ * `@cinatra-ai/sdk-extensions` `HostLoggerPort.capture`). This connector keeps
+ * ONLY the domain policy the host cannot own: the enabled/opt-in gate
+ * (`isOpenAILoggingEnabled`) and the Authorization-header redaction — the
+ * host receives an already-redacted body.
+ */
 export async function writeOpenAILogFile(input: {
   label: string;
   kind: "request" | "response";
@@ -170,8 +166,6 @@ export async function writeOpenAILogFile(input: {
     return;
   }
 
-  await mkdir(OPENAI_API_LOG_DIRECTORY, { recursive: true });
-  const filename = `${buildLogTimestamp()}__${sanitizeLogLabel(input.label)}__${input.kind}.json`;
   const rawContent =
     typeof input.body === "string"
       ? parseJsonResponseBody<unknown>(input.body) ?? { raw: input.body }
@@ -180,9 +174,11 @@ export async function writeOpenAILogFile(input: {
   // hit disk. The OpenAI request body carries the resolved
   // Authorization header for every injected `type: "mcp"` server.
   const content = redactAuthorizationDeep(rawContent);
-  await writeFile(path.join(OPENAI_API_LOG_DIRECTORY, filename), JSON.stringify(content, null, 2), "utf8");
-  // Rotate: cap the on-disk capture so logs can't grow unbounded (best-effort).
-  await enforceLogRetention(OPENAI_API_LOG_DIRECTORY);
+  await getOpenAIDeps().captureLog(OPENAI_LOG_CAPTURE_CHANNEL, {
+    label: input.label,
+    kind: input.kind,
+    body: content,
+  });
 }
 
 export type OpenAIConnectionConfig = {

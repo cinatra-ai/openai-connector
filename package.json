@@ -15,7 +15,7 @@
     "./register": "./src/register.ts",
     "./deps": "./src/deps.ts",
     "./actions": "./src/actions.ts",
-    "./log-directory": "./src/log-directory.ts",
+    "./log-capture-channel": "./src/log-capture-channel.ts",
     "./package.json": "./package.json"
   },
   "scripts": {

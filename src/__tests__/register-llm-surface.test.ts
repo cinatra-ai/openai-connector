@@ -22,8 +22,6 @@ vi.mock("../index", () => ({
   writeOpenAILogFile: writeOpenAILogFileMock,
 }));
 
-vi.mock("../log-directory", () => ({ OPENAI_API_LOG_DIRECTORY: "/logs/openai" }));
-
 vi.mock("../actions-core", () => ({
   makeOpenAIConnectionActions: vi.fn(() => ({
     saveConnection: vi.fn(),
@@ -51,6 +49,16 @@ function activate(): RegisteredProvider {
       registerSetupSurface: () => {},
       registerSettingsSurface: () => {},
       registerAction: () => {},
+    },
+    // Ambient logger (cinatra#981) — register(ctx) reads `captureDirectory`
+    // EAGERLY to build the llm-provider-surface's `logDirectory` field.
+    logger: {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      capture: async () => {},
+      captureDirectory: (channel: string) => `/logs/${channel}`,
     },
   } as never;
   register(ctx);
@@ -126,6 +134,14 @@ function activateWithServices(impls: Record<string, unknown>) {
       registerSetupSurface: () => {},
       registerSettingsSurface: () => {},
       registerAction: () => {},
+    },
+    logger: {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      capture: async () => {},
+      captureDirectory: (channel: string) => `/logs/${channel}`,
     },
   } as never;
   register(ctx);
