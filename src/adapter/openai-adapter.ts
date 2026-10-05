@@ -10,6 +10,7 @@ import { writeOpenAILogFile } from "../index";
 import type {
   LlmProviderAdapter,
   LlmTool,
+  LlmToolReference,
   LlmFunctionTool,
   LlmShellTool,
   LlmMcpServerTool,
@@ -136,6 +137,17 @@ function isShellTool(tool: LlmTool): tool is LlmShellTool {
 
 function isMcpTool(tool: LlmTool): tool is LlmMcpServerTool {
   return "type" in tool && tool.type === "mcp";
+}
+
+/** Report this reduced attempt using caller identities, never transport data. */
+function reportRemovedMcpTools(input: Pick<GenerateInput, "tools" | "onToolsReduced">): void {
+  if (!input.onToolsReduced) return;
+  const removed: LlmToolReference[] = (input.tools ?? [])
+    .filter(isMcpTool)
+    .map((tool) => ({ type: "mcp", serverLabel: tool.serverLabel }));
+  // The existing recovery classifier can retry an unchanged non-MCP toolbox.
+  // Only an actual reduction is reported; its retry may still fail afterwards.
+  if (removed.length > 0) input.onToolsReduced({ removed });
 }
 
 function isContainerSkillsTool(
@@ -591,6 +603,7 @@ export function createOpenAIProviderAdapter(connection: OpenAIConnectionConfig):
           );
           if (recovery.kind === "retry") {
             console.warn("[openai] MCP tool enumeration failed (424) — retrying without MCP tool (dev)");
+            reportRemovedMcpTools(input);
             const retryBody: Record<string, unknown> = { ...requestBody, tools: recovery.toolsWithoutMcp };
             response = await client.responses.create({
               ...retryBody,
@@ -941,6 +954,7 @@ export function createOpenAIProviderAdapter(connection: OpenAIConnectionConfig):
 
           if (recovery.kind === "retry") {
             console.warn("[openai] MCP tool enumeration failed (424) — retrying stream without MCP tool (dev)");
+            reportRemovedMcpTools(input);
             attemptTools = recovery.toolsWithoutMcp;
             continue attempt;
           }
