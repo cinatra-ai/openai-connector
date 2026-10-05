@@ -140,11 +140,13 @@ function isMcpTool(tool: LlmTool): tool is LlmMcpServerTool {
 }
 
 /** Report this reduced attempt using caller identities, never transport data. */
-function reportRemovedMcpTools(input: Pick<GenerateInput, "tools" | "onToolsReduced">): void {
+function reportRemovedMcpTools(
+  input: Pick<GenerateInput, "onToolsReduced">,
+  serverLabels: readonly string[],
+): void {
   if (!input.onToolsReduced) return;
-  const removed: LlmToolReference[] = (input.tools ?? [])
-    .filter(isMcpTool)
-    .map((tool) => ({ type: "mcp", serverLabel: tool.serverLabel }));
+  const removed: LlmToolReference[] = serverLabels
+    .map((serverLabel) => ({ type: "mcp", serverLabel }));
   // The existing recovery classifier can retry an unchanged non-MCP toolbox.
   // Only an actual reduction is reported; its retry may still fail afterwards.
   if (removed.length > 0) input.onToolsReduced({ removed });
@@ -557,6 +559,7 @@ export function createOpenAIProviderAdapter(connection: OpenAIConnectionConfig):
       });
 
       const toolDefs = input.tools ? translateTools(input.tools, resolvedModel) : undefined;
+      const mcpServerLabels = (input.tools ?? []).filter(isMcpTool).map((tool) => tool.serverLabel);
 
       let finalText: string | null = null;
       let response: Awaited<ReturnType<typeof client.responses.create>> | undefined;
@@ -603,7 +606,7 @@ export function createOpenAIProviderAdapter(connection: OpenAIConnectionConfig):
           );
           if (recovery.kind === "retry") {
             console.warn("[openai] MCP tool enumeration failed (424) — retrying without MCP tool (dev)");
-            reportRemovedMcpTools(input);
+            reportRemovedMcpTools(input, mcpServerLabels);
             const retryBody: Record<string, unknown> = { ...requestBody, tools: recovery.toolsWithoutMcp };
             response = await client.responses.create({
               ...retryBody,
@@ -763,6 +766,7 @@ export function createOpenAIProviderAdapter(connection: OpenAIConnectionConfig):
       }));
 
       const toolDefs = input.tools ? translateTools(input.tools, resolvedModel) : undefined;
+      const mcpServerLabels = (input.tools ?? []).filter(isMcpTool).map((tool) => tool.serverLabel);
 
       for (let step = 0; step < maxSteps; step++) {
         input.onStepStart(step + 1);
@@ -954,7 +958,7 @@ export function createOpenAIProviderAdapter(connection: OpenAIConnectionConfig):
 
           if (recovery.kind === "retry") {
             console.warn("[openai] MCP tool enumeration failed (424) — retrying stream without MCP tool (dev)");
-            reportRemovedMcpTools(input);
+            reportRemovedMcpTools(input, mcpServerLabels);
             attemptTools = recovery.toolsWithoutMcp;
             continue attempt;
           }

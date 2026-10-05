@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   LlmTool,
   LlmToolReduction,
+  LlmMcpServerTool,
 } from "@cinatra-ai/sdk-extensions/llm-provider-adapter-contract";
 
 const { create, stream } = vi.hoisted(() => ({ create: vi.fn(), stream: vi.fn() }));
@@ -137,6 +138,26 @@ describe.each<Road>(["generate", "stream"])("%s caller-owned tool reduction (#37
     attempts(road, hostedError);
     expect(await invoke(road, tools)).toEqual({ text: answer, errors: [] });
     expect(requests(road)).toHaveLength(2);
+  });
+
+  it("reports the labels actually offered even if caller tools change during the failed request", async () => {
+    const offered = tools.map((tool) => ({ ...tool }));
+    const changeCallerLabel = () => {
+      offered.find((tool): tool is LlmMcpServerTool => tool.type === "mcp")!.serverLabel = "not-offered";
+    };
+    if (road === "generate") {
+      create.mockImplementationOnce(async () => { changeCallerLabel(); throw hostedError; })
+        .mockResolvedValueOnce(response());
+    } else {
+      stream.mockImplementationOnce(() => {
+        changeCallerLabel(); return responseStream({ error: hostedError });
+      }).mockReturnValueOnce(responseStream());
+    }
+    const reduced = vi.fn();
+    expect(await invoke(road, offered, reduced)).toEqual({ text: answer, errors: [] });
+    expect(requests(road)[0]!.tools!.find((tool) => tool.type === "mcp")!.server_label)
+      .toBe("caller-owned/toolbox:v2");
+    expect(reduced).toHaveBeenCalledExactlyOnceWith(expectedReduction);
   });
 
   it("does not report a reduction on ordinary success", async () => {
